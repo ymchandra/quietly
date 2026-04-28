@@ -1,0 +1,8 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "zU9X3etpoX9WNKsi9naV-"
+uri = "file://artifacts/mobile/assets/images/icon.png"
+type = "image"
+title = "quietread app icon"

@@ -4,6 +4,8 @@
 
 pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
 
+Currently houses **Quietread** — a calm, eye-friendly Expo mobile reading app for free public-domain books. Catalog comes from the public Project Gutenberg / Gutendex API; offline reading via expo-file-system; user state (wishlist, read-later, library, progress, reader settings) via AsyncStorage. No backend.
+
 ## Stack
 
 - **Monorepo tool**: pnpm workspaces
