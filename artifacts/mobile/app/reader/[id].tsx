@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, StyleSheet, ScrollView, Text, ActivityIndicator, Pressable, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
-import { useLocalSearchParams, Stack } from 'expo-router';
+import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { fetchBook, fetchBookText } from '@/lib/gutendex';
 import { getBookTextOffline } from '@/lib/storage';
 import { useLibrary } from '@/contexts/LibraryContext';
 import { useReaderSettings, THEMES, LINE_HEIGHTS } from '@/contexts/ReaderSettingsContext';
 import { ReaderControls } from '@/components/ReaderControls';
-import { ReaderSettingsSheet } from '@/components/ReaderSettingsSheet';
 import { EmptyState } from '@/components/EmptyState';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -15,6 +14,7 @@ export default function ReaderScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const bookId = Number(id);
   
+  const router = useRouter();
   const { progress, setProgress } = useLibrary();
   const { getEffectiveSettings } = useReaderSettings();
   const settings = getEffectiveSettings(bookId);
@@ -22,22 +22,37 @@ export default function ReaderScreen() {
   const insets = useSafeAreaInsets();
 
   const [controlsVisible, setControlsVisible] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
   
   const savedPercent = progress[bookId]?.percent || 0;
 
-  // 1. Fetch text (offline first, then network)
+  // 1. Fetch text (offline first, then network).
+  // The offline check is wrapped so a FileSystem error can never block the
+  // network fallback — the reader should always try the network if there is
+  // no usable offline copy.
   const { data: text, isLoading, error } = useQuery({
     queryKey: ['bookText', bookId],
     queryFn: async () => {
-      const offlineText = await getBookTextOffline(bookId);
+      let offlineText: string | null = null;
+      try {
+        offlineText = await getBookTextOffline(bookId);
+      } catch (offlineErr) {
+        console.warn('[reader] offline read failed, falling back to network:', offlineErr);
+      }
       if (offlineText) return offlineText;
-      const book = await fetchBook(bookId);
-      return fetchBookText(book);
+
+      try {
+        const book = await fetchBook(bookId);
+        return await fetchBookText(book);
+      } catch (networkErr) {
+        // Surface the real cause in the dev console so this is debuggable.
+        console.error('[reader] failed to load book text:', networkErr);
+        throw networkErr;
+      }
     },
-    staleTime: Infinity, // Don't refetch text during session
+    retry: 1,
+    staleTime: Infinity,
   });
 
   // Controls auto-hide
@@ -118,12 +133,16 @@ export default function ReaderScreen() {
           visible={true} 
           theme={settings.theme} 
           percent={0} 
-          onSettingsPress={() => setShowSettings(true)} 
+          onSettingsPress={() => router.push(`/reader/settings/${bookId}`)} 
         />
         <EmptyState 
           icon="alert-circle" 
           title="Couldn't load text" 
-          subtitle="There was an error loading the book content. Please try again."
+          subtitle={
+            error instanceof Error
+              ? error.message
+              : 'There was an error loading the book content. Please try again.'
+          }
         />
       </View>
     );
