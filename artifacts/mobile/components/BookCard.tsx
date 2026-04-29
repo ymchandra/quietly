@@ -10,7 +10,7 @@ interface BookCardProps {
   style?: ViewStyle;
 }
 
-export function BookCard({ book, style }: BookCardProps) {
+function BookCardImpl({ book, style }: BookCardProps) {
   const colors = useColors();
   const coverUrl = getBookCoverUrl(book);
   const authorName = book.authors?.[0]?.name?.split(',').reverse().join(' ').trim() || 'Unknown Author';
@@ -43,6 +43,9 @@ export function BookCard({ book, style }: BookCardProps) {
     </Link>
   );
 }
+
+// Memoize so a parent shelf scroll/re-render doesn't re-render every card.
+export const BookCard = React.memo(BookCardImpl);
 
 const styles = StyleSheet.create({
   container: {
