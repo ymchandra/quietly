@@ -26,7 +26,23 @@ import { ReaderSettingsProvider } from "@/contexts/ReaderSettingsContext";
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 
-const queryClient = new QueryClient();
+// Defaults are tuned for a read-heavy catalog browser:
+// - Long staleTime: a book's metadata effectively never changes within
+//   a session, so re-mounting Discover should not re-fetch.
+// - refetchOnWindowFocus / refetchOnMount off: keeps navigation snappy.
+// - Single retry: if Gutendex is reachable, one retry is plenty.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 60, // 1 hour
+      gcTime: 1000 * 60 * 60 * 24, // 24 hours
+      refetchOnWindowFocus: false,
+      refetchOnMount: false,
+      refetchOnReconnect: false,
+      retry: 1,
+    },
+  },
+});
 
 function RootLayoutNav() {
   return (

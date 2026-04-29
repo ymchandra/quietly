@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, FlatList } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,16 +9,38 @@ import { BookCard } from '@/components/BookCard';
 import { Skeleton } from '@/components/Skeleton';
 import { EmptyState } from '@/components/EmptyState';
 
-const TOPICS = [
-  { id: 'popular', title: 'Most Loved Classics', params: { sort: 'popular' as const } },
-  { id: 'romance', title: 'Romance', params: { topic: 'romance', sort: 'popular' as const } },
-  { id: 'mystery', title: 'Mystery & Detective', params: { topic: 'mystery', sort: 'popular' as const } },
-  { id: 'philosophy', title: 'Philosophy', params: { topic: 'philosophy', sort: 'popular' as const } },
-  { id: 'poetry', title: 'Poetry', params: { topic: 'poetry', sort: 'popular' as const } },
-  { id: 'adventure', title: 'Adventure', params: { topic: 'adventure', sort: 'popular' as const } },
+interface TopicDef {
+  id: string;
+  title: string;
+  params: { sort?: 'popular' | 'ascending' | 'descending'; topic?: string };
+}
+
+const TOPICS: TopicDef[] = [
+  { id: 'popular', title: 'Most Loved Classics', params: { sort: 'popular' } },
+  { id: 'romance', title: 'Romance', params: { topic: 'romance', sort: 'popular' } },
+  { id: 'mystery', title: 'Mystery & Detective', params: { topic: 'mystery', sort: 'popular' } },
+  { id: 'philosophy', title: 'Philosophy', params: { topic: 'philosophy', sort: 'popular' } },
+  { id: 'poetry', title: 'Poetry', params: { topic: 'poetry', sort: 'popular' } },
+  { id: 'adventure', title: 'Adventure', params: { topic: 'adventure', sort: 'popular' } },
 ];
 
-function TopicShelf({ title, params }: { title: string; params: any }) {
+function ShelfSkeletonRow() {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.shelfScroll}>
+      {[1, 2, 3, 4].map(i => (
+        <View key={i} style={styles.skeletonCard}>
+          <Skeleton width={120} height={180} borderRadius={8} />
+          <View style={styles.skeletonInfo}>
+            <Skeleton width={100} height={14} />
+            <Skeleton width={80} height={12} />
+          </View>
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+
+const TopicShelf = React.memo(function TopicShelf({ title, params }: { title: string; params: TopicDef['params'] }) {
   const colors = useColors();
   const { data, isLoading, error } = useQuery<GutendexResponse>({
     queryKey: ['books', params],
@@ -31,30 +53,23 @@ function TopicShelf({ title, params }: { title: string; params: any }) {
     <View style={styles.shelfContainer}>
       <Text style={[styles.shelfTitle, { color: colors.foreground }]}>{title}</Text>
       {isLoading ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.shelfScroll}>
-          {[1, 2, 3, 4].map(i => (
-            <View key={i} style={styles.skeletonCard}>
-              <Skeleton width={120} height={180} borderRadius={8} />
-              <View style={styles.skeletonInfo}>
-                <Skeleton width={100} height={14} />
-                <Skeleton width={80} height={12} />
-              </View>
-            </View>
-          ))}
-        </ScrollView>
+        <ShelfSkeletonRow />
       ) : (
         <FlatList
           horizontal
-          data={data?.results.slice(0, 10) || []}
+          data={(data?.results ?? []).slice(0, 10)}
           keyExtractor={(item) => item.id.toString()}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.shelfScroll}
           renderItem={({ item }) => <BookCard book={item} />}
+          initialNumToRender={4}
+          windowSize={3}
+          removeClippedSubviews
         />
       )}
     </View>
   );
-}
+});
 
 export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
@@ -68,30 +83,35 @@ export default function DiscoverScreen() {
     enabled: searchQuery.length > 0,
   });
 
-  const onRefresh = async () => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
     if (searchQuery.length > 0) {
       await refetchSearch();
     }
     setRefreshing(false);
-  };
+  }, [searchQuery, refetchSearch]);
+
+  const renderShelf = useCallback(
+    ({ item }: { item: TopicDef }) => <TopicShelf title={item.title} params={item.params} />,
+    [],
+  );
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: Math.max(insets.top, 40) }]}>
       <View style={styles.header}>
-        <SearchBar 
-          value={searchQuery} 
-          onChangeText={setSearchQuery} 
-          placeholder="Search author or title..." 
+        <SearchBar
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          placeholder="Search author or title..."
         />
       </View>
 
-      <ScrollView 
-        contentInsetAdjustmentBehavior="automatic"
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
-        contentContainerStyle={{ paddingBottom: 100 }}
-      >
-        {searchQuery.length > 0 ? (
+      {searchQuery.length > 0 ? (
+        <ScrollView
+          contentInsetAdjustmentBehavior="automatic"
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+          contentContainerStyle={{ paddingBottom: 100 }}
+        >
           <View style={styles.searchResults}>
             {isSearching ? (
               <View style={styles.searchGrid}>
@@ -106,10 +126,10 @@ export default function DiscoverScreen() {
                 ))}
               </View>
             ) : searchResults?.results.length === 0 ? (
-              <EmptyState 
-                icon="search" 
-                title="No books found" 
-                subtitle="Try a different search term or explore the categories." 
+              <EmptyState
+                icon="search"
+                title="No books found"
+                subtitle="Try a different search term or explore the categories."
               />
             ) : (
               <View style={styles.searchGrid}>
@@ -121,14 +141,28 @@ export default function DiscoverScreen() {
               </View>
             )}
           </View>
-        ) : (
-          <View style={styles.shelves}>
-            {TOPICS.map(topic => (
-              <TopicShelf key={topic.id} title={topic.title} params={topic.params} />
-            ))}
-          </View>
-        )}
-      </ScrollView>
+        </ScrollView>
+      ) : (
+        // Outer FlatList lazy-mounts shelves as the user scrolls. This
+        // is critical: when the screen was a plain ScrollView, all 6
+        // shelves mounted immediately and fired 6 parallel network
+        // requests + ~60 image downloads, which made the page slow
+        // and laggy on first paint. Now only the first ~2 mount, and
+        // subsequent ones load as they scroll into view.
+        <FlatList
+          data={TOPICS}
+          keyExtractor={(t) => t.id}
+          renderItem={renderShelf}
+          contentContainerStyle={styles.shelvesContent}
+          ItemSeparatorComponent={() => <View style={{ height: 32 }} />}
+          initialNumToRender={2}
+          windowSize={3}
+          maxToRenderPerBatch={2}
+          updateCellsBatchingPeriod={100}
+          removeClippedSubviews
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+        />
+      )}
     </View>
   );
 }
@@ -141,9 +175,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 16,
   },
-  shelves: {
-    gap: 32,
+  shelvesContent: {
     paddingTop: 8,
+    paddingBottom: 100,
   },
   shelfContainer: {
     gap: 16,
@@ -176,5 +210,5 @@ const styles = StyleSheet.create({
   searchGridItem: {
     width: '47%',
     marginBottom: 16,
-  }
+  },
 });
