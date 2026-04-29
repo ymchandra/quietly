@@ -57,6 +57,6 @@
   },
   "dependencies": {
     "@expo-google-fonts/lora": "^0.4.2",
-    "expo-file-system": "^55.0.17"
+    "expo-file-system": "~19.0.22"
   }
 }
