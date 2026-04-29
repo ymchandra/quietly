@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, StyleSheet, ScrollView, Text, ActivityIndicator, Pressable, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
@@ -151,6 +151,38 @@ export default function ReaderScreen() {
   const fontFamily = settings.fontFamily === 'Lora' ? 'Lora_400Regular' : 'Inter_400Regular';
   const lineHeight = Math.round(settings.fontSize * LINE_HEIGHTS[settings.lineHeight]);
 
+  // React Native's <Text> on Android has a hard limit of ~64KB per
+  // element (it silently renders blank past that). Most Gutenberg
+  // books are well over that, so we split the body into chunks and
+  // render each as its own <Text>. Splitting on blank lines keeps
+  // paragraph boundaries intact.
+  const textChunks = useMemo(() => {
+    if (!text) return [] as string[];
+    const MAX_CHUNK = 8000; // chars; keeps each <Text> well under any limit
+    const paragraphs = text.split(/\n{2,}/);
+    const chunks: string[] = [];
+    let buf = '';
+    for (const p of paragraphs) {
+      const piece = p.trim();
+      if (!piece) continue;
+      if (buf.length + piece.length + 2 > MAX_CHUNK && buf.length > 0) {
+        chunks.push(buf);
+        buf = '';
+      }
+      // A single paragraph longer than MAX_CHUNK still needs splitting.
+      if (piece.length > MAX_CHUNK) {
+        if (buf) { chunks.push(buf); buf = ''; }
+        for (let i = 0; i < piece.length; i += MAX_CHUNK) {
+          chunks.push(piece.slice(i, i + MAX_CHUNK));
+        }
+        continue;
+      }
+      buf = buf ? `${buf}\n\n${piece}` : piece;
+    }
+    if (buf) chunks.push(buf);
+    return chunks;
+  }, [text]);
+
   return (
     <View style={[styles.container, { backgroundColor: themeColors.bg }]}>
       <Stack.Screen options={{ headerShown: false }} />
@@ -164,23 +196,26 @@ export default function ReaderScreen() {
         onScroll={handleScroll}
         scrollEventThrottle={100}
         onContentSizeChange={handleContentSizeChange}
-        removeClippedSubviews={true}
       >
         <Pressable onPress={toggleControls} style={styles.textContainer}>
-          <Text 
-            style={[
-              styles.text, 
-              { 
-                color: themeColors.text,
-                fontFamily,
-                fontSize: settings.fontSize,
-                lineHeight,
-              }
-            ]}
-            selectable={true}
-          >
-            {text}
-          </Text>
+          {textChunks.map((chunk, i) => (
+            <Text
+              key={i}
+              style={[
+                styles.text,
+                styles.paragraph,
+                {
+                  color: themeColors.text,
+                  fontFamily,
+                  fontSize: settings.fontSize,
+                  lineHeight,
+                },
+              ]}
+              selectable={true}
+            >
+              {chunk}
+            </Text>
+          ))}
         </Pressable>
       </ScrollView>
 
@@ -215,5 +250,8 @@ const styles = StyleSheet.create({
   },
   text: {
     textAlign: 'left',
-  }
+  },
+  paragraph: {
+    marginBottom: 12,
+  },
 });

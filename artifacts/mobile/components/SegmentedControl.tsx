@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Pressable, Animated } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, Animated, LayoutChangeEvent } from 'react-native';
 import { useColors } from '@/hooks/useColors';
 
 interface SegmentedControlProps {
@@ -10,7 +10,14 @@ interface SegmentedControlProps {
 
 export function SegmentedControl({ segments, selectedIndex, onChange }: SegmentedControlProps) {
   const colors = useColors();
-  const animatedValue = useRef(new Animated.Value(selectedIndex)).current;
+  const [containerWidth, setContainerWidth] = useState(0);
+  const animatedValue = useRef(new Animated.Value(0)).current;
+
+  // Inner padding of the container (must match styles.container.padding).
+  const PADDING = 2;
+  const segmentWidth = containerWidth > 0
+    ? (containerWidth - PADDING * 2) / segments.length
+    : 0;
 
   useEffect(() => {
     Animated.spring(animatedValue, {
@@ -21,33 +28,42 @@ export function SegmentedControl({ segments, selectedIndex, onChange }: Segmente
     }).start();
   }, [selectedIndex, animatedValue]);
 
-  const segmentWidth = 100 / segments.length;
+  const handleLayout = (e: LayoutChangeEvent) => {
+    setContainerWidth(e.nativeEvent.layout.width);
+  };
+
+  // Pixel-based interpolation works reliably with the native driver
+  // on both iOS and Android (percentage outputs do not).
+  const translateX = segmentWidth > 0
+    ? animatedValue.interpolate({
+        inputRange: segments.map((_, i) => i),
+        outputRange: segments.map((_, i) => i * segmentWidth),
+      })
+    : 0;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.muted, borderRadius: 8 }]}>
-      <Animated.View
-        style={[
-          styles.activeBg,
-          {
-            backgroundColor: colors.card,
-            borderRadius: 6,
-            width: `${segmentWidth}%`,
-            transform: [
-              {
-                translateX: animatedValue.interpolate({
-                  inputRange: segments.map((_, i) => i),
-                  outputRange: segments.map((_, i) => `${i * 100}%`),
-                }),
-              },
-            ],
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 1 },
-            shadowOpacity: 0.1,
-            shadowRadius: 2,
-            elevation: 2,
-          },
-        ]}
-      />
+    <View
+      style={[styles.container, { backgroundColor: colors.muted, borderRadius: 8 }]}
+      onLayout={handleLayout}
+    >
+      {segmentWidth > 0 && (
+        <Animated.View
+          style={[
+            styles.activeBg,
+            {
+              backgroundColor: colors.card,
+              borderRadius: 6,
+              width: segmentWidth,
+              transform: [{ translateX }],
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 1 },
+              shadowOpacity: 0.1,
+              shadowRadius: 2,
+              elevation: 2,
+            },
+          ]}
+        />
+      )}
       {segments.map((segment, index) => {
         const isActive = selectedIndex === index;
         return (
@@ -60,7 +76,7 @@ export function SegmentedControl({ segments, selectedIndex, onChange }: Segmente
               style={[
                 styles.segmentText,
                 { color: isActive ? colors.foreground : colors.mutedForeground },
-                isActive && styles.segmentTextActive
+                isActive && styles.segmentTextActive,
               ]}
             >
               {segment}
@@ -97,5 +113,5 @@ const styles = StyleSheet.create({
   },
   segmentTextActive: {
     fontFamily: 'Inter_600SemiBold',
-  }
+  },
 });
