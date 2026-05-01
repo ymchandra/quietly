@@ -39,7 +39,7 @@ const API_BASE =
     ? "/api/books"
     : _domain
       ? `https://${_domain}/api/books`
-      : "https://gutendex.com/books/";
+      : "https://gutendex.com/books"; // no trailing slash — avoids //id double-slash
 
 const REQUEST_HEADERS: Record<string, string> = {
   Accept: "application/json",
@@ -204,6 +204,37 @@ export function cleanGutenbergText(text: string): string {
 }
 
 export async function fetchBookText(book: Book): Promise<string> {
+  // Prefer the server-side proxy endpoint (/api/books/:id/text) when a domain
+  // is configured.  The proxy handles source selection, HTML stripping, caching
+  // and bypasses the CORS restrictions that block direct gutenberg.org calls from
+  // web clients.  For native Expo Go, this is also faster because the caching
+  // means repeat opens of the same book are near-instant.
+  const proxyTextUrl =
+    Platform.OS === "web"
+      ? `/api/books/${book.id}/text`
+      : _domain
+        ? `https://${_domain}/api/books/${book.id}/text`
+        : null;
+
+  if (proxyTextUrl) {
+    try {
+      const res = await fetchWithTimeout(proxyTextUrl, 30000);
+      if (res.ok) {
+        const text = await res.text();
+        if (text && text.length >= 200) return text;
+      }
+    } catch (proxyErr) {
+      // Proxy unreachable — fall through to direct Gutenberg sources below.
+      console.warn(
+        "[gutendex] proxy text fetch failed, falling back to direct sources:",
+        proxyErr,
+      );
+    }
+  }
+
+  // Fallback: fetch text directly from Project Gutenberg mirror URLs.
+  // Used when no proxy domain is configured (local bare-Expo builds) or
+  // when the proxy request above failed.
   const sources = getBookTextSources(book);
   if (sources.length === 0) {
     throw new Error("No readable text format is available for this book.");
