@@ -5,10 +5,10 @@ import {
   FlatList,
   Text,
   ActivityIndicator,
-  Pressable,
   NativeSyntheticEvent,
   NativeScrollEvent,
   ListRenderItemInfo,
+  useWindowDimensions,
 } from 'react-native';
 import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
@@ -20,35 +20,67 @@ import { ReaderControls } from '@/components/ReaderControls';
 import { EmptyState } from '@/components/EmptyState';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-// Split full text into chunks that are safe to render as individual <Text>
-// elements. React Native on Android has a hard ~64 KB limit per <Text>
-// element and silently renders blank past that. Splitting on blank lines
-// keeps paragraph boundaries intact.
+// Average character width as a fraction of font size.
+// Derived empirically for both Lora and Inter at typical reading sizes;
+// Inter is slightly narrower but the difference is within the 0.85 safety
+// factor applied later, so a single value works for both.
+const CHAR_WIDTH_RATIO = 0.52;
+
+// Safety factor applied to the theoretical chars-per-page estimate to
+// give breathing room for paragraph breaks and variable-width characters.
+const PAGE_FILL_FACTOR = 0.85;
+
+// Minimum characters per page regardless of screen/font settings, so very
+// small screens or very large font sizes always show a usable amount of text.
+const MIN_CHARS_PER_PAGE = 300;
+
+// Split full text into pages sized to fill one screen at the current
+// typography settings. charsPerPage is pre-calculated by the caller based
+// on screen dimensions and font size/line-height so each page looks like a
+// real book page.
 // IMPORTANT: must be declared before any conditional returns (Rules of Hooks).
-function splitTextIntoChunks(text: string | undefined): string[] {
+function splitTextIntoPages(text: string | undefined, charsPerPage: number): string[] {
   if (!text) return [];
-  const MAX_CHUNK = 8000;
   const paragraphs = text.split(/\n{2,}/);
-  const chunks: string[] = [];
-  let buf = '';
+  const pages: string[] = [];
+  let current = '';
   for (const p of paragraphs) {
     const piece = p.trim();
     if (!piece) continue;
-    if (buf.length + piece.length + 2 > MAX_CHUNK && buf.length > 0) {
-      chunks.push(buf);
-      buf = '';
-    }
-    if (piece.length > MAX_CHUNK) {
-      if (buf) { chunks.push(buf); buf = ''; }
-      for (let i = 0; i < piece.length; i += MAX_CHUNK) {
-        chunks.push(piece.slice(i, i + MAX_CHUNK));
-      }
+
+    // Paragraph fits alongside current accumulator → keep appending.
+    if (current.length + piece.length + 2 <= charsPerPage) {
+      current = current ? `${current}\n\n${piece}` : piece;
       continue;
     }
-    buf = buf ? `${buf}\n\n${piece}` : piece;
+
+    // Flush the current page before handling this paragraph.
+    if (current.length > 0) {
+      pages.push(current);
+      current = '';
+    }
+
+    // Paragraph is smaller than a full page → start a fresh page with it.
+    if (piece.length <= charsPerPage) {
+      current = piece;
+      continue;
+    }
+
+    // Paragraph exceeds a full page → split it into page-sized slices.
+    // We split on word boundaries where possible to avoid mid-word breaks.
+    let remaining = piece;
+    while (remaining.length > charsPerPage) {
+      let splitAt = charsPerPage;
+      // Walk back to the nearest space so we don't break a word.
+      while (splitAt > 0 && remaining[splitAt] !== ' ') splitAt--;
+      if (splitAt === 0) splitAt = charsPerPage; // no space found – hard split
+      pages.push(remaining.slice(0, splitAt).trim());
+      remaining = remaining.slice(splitAt).trim();
+    }
+    if (remaining.length > 0) current = remaining;
   }
-  if (buf) chunks.push(buf);
-  return chunks;
+  if (current) pages.push(current);
+  return pages;
 }
 
 export default function ReaderScreen() {
@@ -61,13 +93,16 @@ export default function ReaderScreen() {
   const settings = getEffectiveSettings(bookId);
   const themeColors = THEMES[settings.theme];
   const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
 
   // ── All hooks must appear before any conditional return ──────────────────
 
   const [controlsVisible, setControlsVisible] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const flatListRef = useRef<FlatList>(null);
   const touchStartY = useRef(0);
+  const touchStartX = useRef(0);
   const savedPercent = progress[bookId]?.percent || 0;
 
   // 1. Fetch text (offline first, then network).
@@ -94,10 +129,43 @@ export default function ReaderScreen() {
     staleTime: Infinity,
   });
 
-  // 2. Split text into renderable chunks (must be before early returns).
-  const textChunks = useMemo(() => splitTextIntoChunks(text), [text]);
+  // 2. Typography helpers (needed for page-size calculation below).
+  const fontFamily = settings.fontFamily === 'Lora' ? 'Lora_400Regular' : 'Inter_400Regular';
+  const lineHeight = Math.round(settings.fontSize * LINE_HEIGHTS[settings.lineHeight]);
 
-  // 3. Controls auto-hide.
+  // 3. Estimate how many characters fit on a single screen page.
+  //    The formula approximates: chars-per-line × lines-per-page.
+  //    A 0.85 factor gives breathing room for paragraph gaps and
+  //    variable character widths.
+  const charsPerPage = useMemo(() => {
+    const paddingTop = Math.max(insets.top, 40);
+    const paddingBottom = Math.max(insets.bottom, 60);
+    const textHeight = height - paddingTop - paddingBottom;
+    const textWidth = width - 48; // 24 px horizontal padding each side
+    const charsPerLine = Math.floor(textWidth / (settings.fontSize * CHAR_WIDTH_RATIO));
+    const linesPerPage = Math.floor(textHeight / lineHeight);
+    return Math.max(MIN_CHARS_PER_PAGE, Math.floor(charsPerLine * linesPerPage * PAGE_FILL_FACTOR));
+  }, [height, width, settings.fontSize, lineHeight, insets.top, insets.bottom]);
+
+  // 4. Split text into screen-sized pages (must be before early returns).
+  const pages = useMemo(() => splitTextIntoPages(text, charsPerPage), [text, charsPerPage]);
+
+  // 5. Derive the initial page from the saved reading position.
+  const initialPage = useMemo(() => {
+    if (savedPercent <= 0 || pages.length <= 1) return 0;
+    return Math.min(pages.length - 1, Math.round((savedPercent / 100) * (pages.length - 1)));
+  }, [savedPercent, pages.length]);
+
+  // 6. Once pages are available, jump to the saved page and sync state.
+  const hasRestoredPage = useRef(false);
+  useEffect(() => {
+    if (!hasRestoredPage.current && pages.length > 0) {
+      hasRestoredPage.current = true;
+      setCurrentPage(initialPage);
+    }
+  }, [pages.length, initialPage]);
+
+  // 7. Controls auto-hide.
   const toggleControls = useCallback(() => {
     setControlsVisible(prev => {
       const next = !prev;
@@ -119,64 +187,57 @@ export default function ReaderScreen() {
     };
   }, [controlsVisible]);
 
-  // 4. Scroll tracking — saved every 100 ms to avoid flooding state.
-  const handleScroll = useCallback(
+  // 8. Page-change tracking — fires after each swipe animation completes.
+  const handleMomentumScrollEnd = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+      const pageIndex = Math.round(event.nativeEvent.contentOffset.x / width);
+      const clampedPage = Math.max(0, Math.min(pages.length - 1, pageIndex));
+      setCurrentPage(clampedPage);
       if (controlsVisible) setControlsVisible(false);
-      const maxOffset = contentSize.height - layoutMeasurement.height;
-      if (maxOffset <= 0) return;
-      const pct = Math.max(0, Math.min(100, (contentOffset.y / maxOffset) * 100));
+      const pct = pages.length > 1 ? (clampedPage / (pages.length - 1)) * 100 : 100;
       setProgress(bookId, pct);
     },
-    [bookId, setProgress, controlsVisible],
+    [bookId, setProgress, pages.length, width, controlsVisible],
   );
 
-  // 5. Restore saved position once the content is tall enough to scroll.
-  const hasRestoredScroll = useRef(false);
-  const handleContentSizeChange = useCallback(
-    (w: number, h: number) => {
-      if (!hasRestoredScroll.current && h > 0 && flatListRef.current && savedPercent > 0) {
-        const layoutHeight = insets.top + insets.bottom + 800;
-        const maxOffset = h - layoutHeight;
-        if (maxOffset > 0) {
-          flatListRef.current.scrollToOffset({
-            offset: (savedPercent / 100) * maxOffset,
-            animated: false,
-          });
-        }
-        hasRestoredScroll.current = true;
-      }
-    },
-    [savedPercent, insets],
+  // 9. getItemLayout lets FlatList know each page is exactly `width` wide so
+  //    initialScrollIndex works without a layout pass.
+  const getItemLayout = useCallback(
+    (_: unknown, index: number) => ({ length: width, offset: width * index, index }),
+    [width],
   );
 
-  // 6. Render a single text chunk.  Defined here (not inline) so the function
-  //    reference is stable across re-renders and FlatList doesn't re-render
-  //    every visible item when unrelated state changes.
-  const fontFamily = settings.fontFamily === 'Lora' ? 'Lora_400Regular' : 'Inter_400Regular';
-  const lineHeight = Math.round(settings.fontSize * LINE_HEIGHTS[settings.lineHeight]);
-
-  const renderChunk = useCallback(
+  // 10. Render a single page.  Stable reference so FlatList doesn't re-render
+  //     every visible item on unrelated state changes.
+  const renderPage = useCallback(
     ({ item }: ListRenderItemInfo<string>) => (
-      <Text
+      <View
         style={[
-          styles.text,
-          styles.paragraph,
+          styles.page,
           {
-            color: themeColors.text,
-            fontFamily,
-            fontSize: settings.fontSize,
-            lineHeight,
+            width,
+            paddingTop: Math.max(insets.top, 40),
+            paddingBottom: Math.max(insets.bottom, 60),
           },
         ]}
-        selectable
       >
-        {item}
-      </Text>
+        <Text
+          style={[
+            styles.text,
+            {
+              color: themeColors.text,
+              fontFamily,
+              fontSize: settings.fontSize,
+              lineHeight,
+            },
+          ]}
+          selectable
+        >
+          {item}
+        </Text>
+      </View>
     ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [themeColors.text, fontFamily, settings.fontSize, lineHeight],
+    [width, insets.top, insets.bottom, themeColors.text, fontFamily, settings.fontSize, lineHeight],
   );
 
   // ── Conditional returns (after all hooks) ────────────────────────────────
@@ -215,54 +276,57 @@ export default function ReaderScreen() {
     );
   }
 
+  const percent = pages.length > 1 ? (currentPage / (pages.length - 1)) * 100 : 100;
+
   return (
     <View style={[styles.container, { backgroundColor: themeColors.bg }]}>
       <Stack.Screen options={{ headerShown: false }} />
 
       {/*
-        FlatList virtualises the text chunks so only what is currently
-        visible (plus a small buffer) is mounted. A plain ScrollView +
-        map renders every chunk immediately, which on a full-length book
-        (200–500 chunks) causes a significant initial-render stall and
-        wastes memory. Using FlatList reduces first-paint time and keeps
-        scrolling smooth throughout the book.
+        Horizontal FlatList with pagingEnabled turns the reader into a
+        book-like page-swiping experience. Each item is exactly `width`
+        wide so the list snaps to a full page on every swipe.
 
-        Tap detection: we track touchStart/touchEnd Y-delta ourselves
-        because FlatList intercepts press events. If the finger moves
-        less than 8 px it is treated as a tap → toggle controls.
+        getItemLayout is required for initialScrollIndex to work without
+        a layout pass (restores saved reading position instantly).
+
+        Tap detection: we track both X and Y delta so horizontal swipes
+        don't accidentally trigger the control overlay.
       */}
       <FlatList
         ref={flatListRef}
-        data={textChunks}
+        data={pages}
         keyExtractor={(_, i) => i.toString()}
-        renderItem={renderChunk}
-        contentContainerStyle={[
-          styles.scrollContent,
-          {
-            paddingTop: Math.max(insets.top, 40),
-            paddingBottom: Math.max(insets.bottom, 60),
-          },
-        ]}
-        onScroll={handleScroll}
-        scrollEventThrottle={100}
-        onContentSizeChange={handleContentSizeChange}
-        initialNumToRender={12}
-        maxToRenderPerBatch={8}
+        renderItem={renderPage}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        bounces={false}
+        getItemLayout={getItemLayout}
+        initialScrollIndex={initialPage}
+        onMomentumScrollEnd={handleMomentumScrollEnd}
+        initialNumToRender={3}
+        maxToRenderPerBatch={3}
         windowSize={5}
         removeClippedSubviews
-        // Tap detection without blocking scroll
-        onTouchStart={(e) => { touchStartY.current = e.nativeEvent.pageY; }}
+        // Tap detection without blocking swipe
+        onTouchStart={(e) => {
+          touchStartY.current = e.nativeEvent.pageY;
+          touchStartX.current = e.nativeEvent.pageX;
+        }}
         onTouchEnd={(e) => {
-          if (Math.abs(e.nativeEvent.pageY - touchStartY.current) < 8) {
-            toggleControls();
-          }
+          const dx = Math.abs(e.nativeEvent.pageX - touchStartX.current);
+          const dy = Math.abs(e.nativeEvent.pageY - touchStartY.current);
+          if (dx < 8 && dy < 8) toggleControls();
         }}
       />
 
       <ReaderControls
         visible={controlsVisible}
         theme={settings.theme}
-        percent={savedPercent}
+        percent={percent}
+        currentPage={currentPage + 1}
+        totalPages={pages.length}
         onSettingsPress={() => {
           setControlsVisible(false);
           router.push(`/reader/settings/${bookId}`);
@@ -281,13 +345,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  scrollContent: {
+  page: {
+    flex: 1,
     paddingHorizontal: 24,
   },
   text: {
     textAlign: 'left',
-  },
-  paragraph: {
-    marginBottom: 12,
   },
 });
