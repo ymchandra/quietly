@@ -18,7 +18,7 @@ export default function SettingsScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: Math.max(insets.top, 40) }]}>
-      <Text style={[styles.headerTitle, { color: colors.foreground }]}>Reader Defaults</Text>
+      <Text style={[styles.headerTitle, { color: colors.foreground }]}>Settings</Text>
       
       <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
         <View style={styles.content}>
@@ -110,7 +110,7 @@ export default function SettingsScreen() {
           </View>
 
           <View style={[styles.aboutCard, { backgroundColor: colors.secondary, borderRadius: colors.radius }]}>
-            <Text style={[styles.aboutTitle, { color: colors.foreground }]}>Quietread</Text>
+            <Text style={[styles.aboutTitle, { color: colors.foreground }]}>Quietly</Text>
             <Text style={[styles.aboutText, { color: colors.secondaryForeground }]}>
               A calm, unhurried reader for free public-domain classics. Take a deep breath and lose yourself in a good book.
             </Text>
