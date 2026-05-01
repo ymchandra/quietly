@@ -1,8 +1,16 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, FlatList } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  RefreshControl,
+  FlatList,
+  useColorScheme,
+} from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { fetchBooks, GutendexResponse, Book } from '@/lib/gutendex';
+import { fetchBooks, GutendexResponse } from '@/lib/gutendex';
 import { useColors } from '@/hooks/useColors';
 import { SearchBar } from '@/components/SearchBar';
 import { BookCard } from '@/components/BookCard';
@@ -16,18 +24,18 @@ interface TopicDef {
 }
 
 const TOPICS: TopicDef[] = [
-  { id: 'popular', title: 'Most Loved Classics', params: { sort: 'popular' } },
-  { id: 'romance', title: 'Romance', params: { topic: 'romance', sort: 'popular' } },
-  { id: 'mystery', title: 'Mystery & Detective', params: { topic: 'mystery', sort: 'popular' } },
-  { id: 'philosophy', title: 'Philosophy', params: { topic: 'philosophy', sort: 'popular' } },
-  { id: 'poetry', title: 'Poetry', params: { topic: 'poetry', sort: 'popular' } },
-  { id: 'adventure', title: 'Adventure', params: { topic: 'adventure', sort: 'popular' } },
+  { id: 'popular',    title: 'Most Loved Classics',   params: { sort: 'popular' } },
+  { id: 'romance',    title: 'Romance',                params: { topic: 'romance',    sort: 'popular' } },
+  { id: 'mystery',    title: 'Mystery & Detective',    params: { topic: 'mystery',    sort: 'popular' } },
+  { id: 'philosophy', title: 'Philosophy',             params: { topic: 'philosophy', sort: 'popular' } },
+  { id: 'poetry',     title: 'Poetry',                 params: { topic: 'poetry',     sort: 'popular' } },
+  { id: 'adventure',  title: 'Adventure',              params: { topic: 'adventure',  sort: 'popular' } },
 ];
 
-function ShelfSkeletonRow() {
+const ShelfSkeletonRow = React.memo(function ShelfSkeletonRow() {
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.shelfScroll}>
-      {[1, 2, 3, 4].map(i => (
+      {[0, 1, 2, 3].map(i => (
         <View key={i} style={styles.skeletonCard}>
           <Skeleton width={120} height={180} borderRadius={8} />
           <View style={styles.skeletonInfo}>
@@ -38,9 +46,15 @@ function ShelfSkeletonRow() {
       ))}
     </ScrollView>
   );
-}
+});
 
-const TopicShelf = React.memo(function TopicShelf({ title, params }: { title: string; params: TopicDef['params'] }) {
+const TopicShelf = React.memo(function TopicShelf({
+  title,
+  params,
+}: {
+  title: string;
+  params: TopicDef['params'];
+}) {
   const colors = useColors();
   const { data, isLoading, error } = useQuery<GutendexResponse>({
     queryKey: ['books', params],
@@ -63,7 +77,8 @@ const TopicShelf = React.memo(function TopicShelf({ title, params }: { title: st
           contentContainerStyle={styles.shelfScroll}
           renderItem={({ item }) => <BookCard book={item} />}
           initialNumToRender={4}
-          windowSize={3}
+          maxToRenderPerBatch={4}
+          windowSize={2}
           removeClippedSubviews
         />
       )}
@@ -74,14 +89,16 @@ const TopicShelf = React.memo(function TopicShelf({ title, params }: { title: st
 export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
   const colors = useColors();
+  const colorScheme = useColorScheme();
   const [searchQuery, setSearchQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
 
-  const { data: searchResults, isLoading: isSearching, refetch: refetchSearch } = useQuery<GutendexResponse>({
-    queryKey: ['search', searchQuery],
-    queryFn: () => fetchBooks({ search: searchQuery, languages: 'en' }),
-    enabled: searchQuery.length > 0,
-  });
+  const { data: searchResults, isLoading: isSearching, refetch: refetchSearch } =
+    useQuery<GutendexResponse>({
+      queryKey: ['search', searchQuery],
+      queryFn: () => fetchBooks({ search: searchQuery, languages: 'en' }),
+      enabled: searchQuery.length > 0,
+    });
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -92,35 +109,50 @@ export default function DiscoverScreen() {
   }, [searchQuery, refetchSearch]);
 
   const renderShelf = useCallback(
-    ({ item }: { item: TopicDef }) => <TopicShelf title={item.title} params={item.params} />,
+    ({ item }: { item: TopicDef }) => (
+      <TopicShelf title={item.title} params={item.params} />
+    ),
     [],
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: Math.max(insets.top, 40) }]}>
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: colors.background, paddingTop: Math.max(insets.top, 40) },
+      ]}
+    >
+      {/* Wordmark */}
       <View style={styles.header}>
+        <Text style={[styles.wordmark, { color: colors.foreground }]}>Quietly</Text>
         <SearchBar
           value={searchQuery}
           onChangeText={setSearchQuery}
-          placeholder="Search author or title..."
+          placeholder="Search author or title…"
         />
       </View>
 
       {searchQuery.length > 0 ? (
         <ScrollView
           contentInsetAdjustmentBehavior="automatic"
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.primary}
+            />
+          }
           contentContainerStyle={{ paddingBottom: 100 }}
         >
           <View style={styles.searchResults}>
             {isSearching ? (
               <View style={styles.searchGrid}>
-                {[1, 2, 3, 4].map(i => (
-                  <View key={i} style={styles.skeletonCard}>
-                    <Skeleton width={120} height={180} borderRadius={8} />
+                {[0, 1, 2, 3].map(i => (
+                  <View key={i} style={[styles.skeletonCard, styles.searchGridItem]}>
+                    <Skeleton width="100%" height={180} borderRadius={8} />
                     <View style={styles.skeletonInfo}>
-                      <Skeleton width={100} height={14} />
-                      <Skeleton width={80} height={12} />
+                      <Skeleton width="80%" height={14} />
+                      <Skeleton width="60%" height={12} />
                     </View>
                   </View>
                 ))}
@@ -143,12 +175,10 @@ export default function DiscoverScreen() {
           </View>
         </ScrollView>
       ) : (
-        // Outer FlatList lazy-mounts shelves as the user scrolls. This
-        // is critical: when the screen was a plain ScrollView, all 6
-        // shelves mounted immediately and fired 6 parallel network
-        // requests + ~60 image downloads, which made the page slow
-        // and laggy on first paint. Now only the first ~2 mount, and
-        // subsequent ones load as they scroll into view.
+        // Outer FlatList lazy-mounts shelves. initialNumToRender=2 means
+        // only the top two shelves fire requests on first paint; the rest
+        // mount as they scroll into view. windowSize=2 keeps one viewport
+        // worth of shelves rendered at a time, reducing memory pressure.
         <FlatList
           data={TOPICS}
           keyExtractor={(t) => t.id}
@@ -156,11 +186,17 @@ export default function DiscoverScreen() {
           contentContainerStyle={styles.shelvesContent}
           ItemSeparatorComponent={() => <View style={{ height: 32 }} />}
           initialNumToRender={2}
-          windowSize={3}
-          maxToRenderPerBatch={2}
-          updateCellsBatchingPeriod={100}
+          maxToRenderPerBatch={1}
+          updateCellsBatchingPeriod={150}
+          windowSize={2}
           removeClippedSubviews
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.primary}
+            />
+          }
         />
       )}
     </View>
@@ -174,6 +210,12 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 16,
     paddingBottom: 16,
+    gap: 12,
+  },
+  wordmark: {
+    fontFamily: 'Lora_600SemiBold',
+    fontSize: 32,
+    letterSpacing: -0.5,
   },
   shelvesContent: {
     paddingTop: 8,
@@ -184,7 +226,7 @@ const styles = StyleSheet.create({
   },
   shelfTitle: {
     fontFamily: 'Lora_600SemiBold',
-    fontSize: 22,
+    fontSize: 20,
     paddingHorizontal: 16,
   },
   shelfScroll: {
@@ -205,10 +247,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 16,
-    justifyContent: 'space-between',
   },
   searchGridItem: {
     width: '47%',
-    marginBottom: 16,
   },
 });

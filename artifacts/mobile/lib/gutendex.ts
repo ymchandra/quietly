@@ -29,7 +29,7 @@ const API_BASE = "https://gutendex.com/books";
 
 const REQUEST_HEADERS: Record<string, string> = {
   "Accept": "*/*",
-  "User-Agent": "Quietread/1.0 (Expo; Reader)",
+  "User-Agent": "Quietly/1.0 (Expo; Reader)",
 };
 
 // Fetch with a hard timeout — Project Gutenberg mirrors can hang.
