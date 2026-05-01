@@ -9,6 +9,7 @@ import {
   NativeScrollEvent,
   ListRenderItemInfo,
   useWindowDimensions,
+  Pressable,
 } from 'react-native';
 import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
@@ -101,8 +102,6 @@ export default function ReaderScreen() {
   const [currentPage, setCurrentPage] = useState(0);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const flatListRef = useRef<FlatList>(null);
-  const touchStartY = useRef(0);
-  const touchStartX = useRef(0);
   const savedPercent = progress[bookId]?.percent || 0;
 
   // 1. Fetch text (offline first, then network).
@@ -209,17 +208,22 @@ export default function ReaderScreen() {
 
   // 10. Render a single page.  Stable reference so FlatList doesn't re-render
   //     every visible item on unrelated state changes.
+  //     Each page is given an explicit width AND height so that in a horizontal
+  //     FlatList the cross-axis dimension fills the screen — relying on flex:1
+  //     alone is not reliable for items in a horizontal scroll view.
   const renderPage = useCallback(
     ({ item }: ListRenderItemInfo<string>) => (
-      <View
+      <Pressable
         style={[
           styles.page,
           {
             width,
+            height,
             paddingTop: Math.max(insets.top, 40),
             paddingBottom: Math.max(insets.bottom, 60),
           },
         ]}
+        onPress={toggleControls}
       >
         <Text
           style={[
@@ -231,13 +235,13 @@ export default function ReaderScreen() {
               lineHeight,
             },
           ]}
-          selectable
+          selectable={false}
         >
           {item}
         </Text>
-      </View>
+      </Pressable>
     ),
-    [width, insets.top, insets.bottom, themeColors.text, fontFamily, settings.fontSize, lineHeight],
+    [width, height, insets.top, insets.bottom, themeColors.text, fontFamily, settings.fontSize, lineHeight, toggleControls],
   );
 
   // ── Conditional returns (after all hooks) ────────────────────────────────
@@ -285,13 +289,18 @@ export default function ReaderScreen() {
       {/*
         Horizontal FlatList with pagingEnabled turns the reader into a
         book-like page-swiping experience. Each item is exactly `width`
-        wide so the list snaps to a full page on every swipe.
+        wide and `height` tall so the list snaps to a full page on every
+        swipe.
 
         getItemLayout is required for initialScrollIndex to work without
         a layout pass (restores saved reading position instantly).
 
-        Tap detection: we track both X and Y delta so horizontal swipes
-        don't accidentally trigger the control overlay.
+        Tap to toggle controls is handled by the Pressable wrapper inside
+        each page item, which avoids conflicts with the horizontal swipe
+        gesture on the new React Native architecture.
+
+        removeClippedSubviews is intentionally omitted — it can cause
+        blank pages when combined with pagingEnabled.
       */}
       <FlatList
         ref={flatListRef}
@@ -302,23 +311,14 @@ export default function ReaderScreen() {
         pagingEnabled
         showsHorizontalScrollIndicator={false}
         bounces={false}
+        decelerationRate="fast"
         getItemLayout={getItemLayout}
         initialScrollIndex={initialPage}
         onMomentumScrollEnd={handleMomentumScrollEnd}
         initialNumToRender={3}
         maxToRenderPerBatch={3}
         windowSize={5}
-        removeClippedSubviews
-        // Tap detection without blocking swipe
-        onTouchStart={(e) => {
-          touchStartY.current = e.nativeEvent.pageY;
-          touchStartX.current = e.nativeEvent.pageX;
-        }}
-        onTouchEnd={(e) => {
-          const dx = Math.abs(e.nativeEvent.pageX - touchStartX.current);
-          const dy = Math.abs(e.nativeEvent.pageY - touchStartY.current);
-          if (dx < 8 && dy < 8) toggleControls();
-        }}
+        style={styles.flatList}
       />
 
       <ReaderControls
@@ -340,14 +340,17 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  flatList: {
+    flex: 1,
+  },
   center: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   page: {
-    flex: 1,
     paddingHorizontal: 24,
+    overflow: 'hidden',
   },
   text: {
     textAlign: 'left',
