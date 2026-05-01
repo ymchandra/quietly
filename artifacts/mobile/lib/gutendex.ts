@@ -27,17 +27,22 @@ export interface GutendexResponse {
   results: Book[];
 }
 
-// On web (Expo Web / browser) all requests are routed through the API server
-// proxy so that same-origin fetch calls are used.  This avoids CORS blocks on
-// both the Gutendex API and on Project Gutenberg text files.
-// On native (iOS / Android) there are no CORS restrictions, so we call the
-// upstream services directly.
-const IS_WEB = Platform.OS === "web";
-const API_BASE = IS_WEB ? "/api/books" : "https://gutendex.com/books";
+// Route catalog requests through our own API server so that web-preview and
+// PWA clients are not blocked by gutendex.com's missing CORS headers.
+//   • Web  – use a root-relative path; the shared Replit proxy maps /api → api-server
+//   • Native (Expo Go / standalone) – use the full Replit dev/prod domain
+//     from the EXPO_PUBLIC_DOMAIN env var injected by the workflow; if the
+//     var is absent (e.g. local bare-Expo) fall back to gutendex directly.
+const _domain = process.env.EXPO_PUBLIC_DOMAIN;
+const API_BASE =
+  Platform.OS === "web"
+    ? "/api/books"
+    : _domain
+      ? `https://${_domain}/api/books`
+      : "https://gutendex.com/books/";
 
 const REQUEST_HEADERS: Record<string, string> = {
-  Accept: "*/*",
-  "User-Agent": "Quietly/1.0 (Expo; Reader)",
+  Accept: "application/json",
 };
 
 // Fetch with a hard timeout — Project Gutenberg mirrors can hang.
@@ -64,15 +69,17 @@ export async function fetchBooks(params?: {
   languages?: string;
   sort?: "popular" | "ascending" | "descending";
 }): Promise<GutendexResponse> {
-  const url = new URL(API_BASE, IS_WEB ? globalThis.location?.href : undefined);
+  // Build query string without using `new URL()` so that relative paths
+  // (used on web to avoid the CORS redirect issue) are handled correctly.
+  const qs = new URLSearchParams();
+  if (params?.search) qs.append("search", params.search);
+  if (params?.page) qs.append("page", params.page.toString());
+  if (params?.topic) qs.append("topic", params.topic);
+  if (params?.languages) qs.append("languages", params.languages);
+  if (params?.sort) qs.append("sort", params.sort);
 
-  if (params?.search) url.searchParams.append("search", params.search);
-  if (params?.page) url.searchParams.append("page", params.page.toString());
-  if (params?.topic) url.searchParams.append("topic", params.topic);
-  if (params?.languages) url.searchParams.append("languages", params.languages);
-  if (params?.sort) url.searchParams.append("sort", params.sort);
-
-  const res = await fetchWithTimeout(url.toString(), 15000);
+  const url = qs.toString() ? `${API_BASE}?${qs.toString()}` : API_BASE;
+  const res = await fetchWithTimeout(url, 15000);
   if (!res.ok) throw new Error(`Failed to fetch books (HTTP ${res.status})`);
   return res.json();
 }
@@ -166,10 +173,10 @@ function htmlToPlainText(html: string): string {
     .replace(/&mdash;/g, "—")
     .replace(/&ndash;/g, "–")
     .replace(/&hellip;/g, "…")
-    .replace(/&rsquo;/g, "\u2019")
-    .replace(/&lsquo;/g, "\u2018")
-    .replace(/&rdquo;/g, "\u201d")
-    .replace(/&ldquo;/g, "\u201c")
+    .replace(/&rsquo;/g, "’")
+    .replace(/&lsquo;/g, "‘")
+    .replace(/&rdquo;/g, "”")
+    .replace(/&ldquo;/g, "“")
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n");
@@ -197,29 +204,6 @@ export function cleanGutenbergText(text: string): string {
 }
 
 export async function fetchBookText(book: Book): Promise<string> {
-  // On web, delegate to the API server which fetches and cleans the text
-  // server-side — bypassing the CORS restrictions that block direct browser
-  // requests to gutenberg.org.
-  if (IS_WEB) {
-    const res = await fetchWithTimeout(`${API_BASE}/${book.id}/text`, 60000);
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      const message = (() => {
-        try {
-          return (JSON.parse(body) as { error?: string }).error ?? body;
-        } catch {
-          return body;
-        }
-      })();
-      throw new Error(
-        message ||
-          `Couldn't reach Project Gutenberg for "${book.title}". Please check your connection and try again.`,
-      );
-    }
-    return res.text();
-  }
-
-  // Native: try each source in sequence (no CORS restrictions).
   const sources = getBookTextSources(book);
   if (sources.length === 0) {
     throw new Error("No readable text format is available for this book.");

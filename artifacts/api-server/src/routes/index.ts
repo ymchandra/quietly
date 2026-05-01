@@ -1,10 +1,10 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
-import booksRouter from "./books";
+import gutendexRouter from "./gutendex";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
-router.use(booksRouter);
+router.use(gutendexRouter);
 
 export default router;
