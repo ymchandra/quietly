@@ -72,8 +72,8 @@ function htmlToPlainText(html: string): string {
     .replace(/&mdash;/g, "—")
     .replace(/&ndash;/g, "–")
     .replace(/&hellip;/g, "…")
-    .replace(/&rsquo;/g, "'")
-    .replace(/&lsquo;/g, "'")
+    .replace(/&rsquo;/g, "\u2019")
+    .replace(/&lsquo;/g, "\u2018")
     .replace(/&rdquo;/g, "\u201d")
     .replace(/&ldquo;/g, "\u201c")
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
@@ -101,7 +101,7 @@ function cleanGutenbergText(text: string): string {
 
 type TextSource = { url: string; isHtml: boolean };
 
-function buildTextSources(
+function getBookTextSources(
   bookId: number,
   formats: Record<string, string>,
 ): TextSource[] {
@@ -246,7 +246,7 @@ router.get("/books/:id/text", async (req, res) => {
       formats?: Record<string, string>;
     };
     const formats = book.formats ?? {};
-    const sources = buildTextSources(bookId, formats);
+    const sources = getBookTextSources(bookId, formats);
 
     if (sources.length === 0) {
       res
