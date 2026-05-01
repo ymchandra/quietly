@@ -6,6 +6,10 @@
  * - GET / without expo-platform → landing page HTML
  * Everything else falls through to static file serving from ./static-build/.
  *
+ * Requests whose path starts with /api are reverse-proxied to the API server
+ * running on port 8080 (same machine).  This lets the Expo Web build make
+ * same-origin API calls — e.g. /api/books — without CORS restrictions.
+ *
  * Zero external dependencies — uses only Node.js built-ins (http, fs, path).
  */
 
@@ -34,6 +38,39 @@ const MIME_TYPES = {
   ".otf": "font/otf",
   ".map": "application/json",
 };
+
+const API_SERVER_PORT = parseInt(process.env.API_PORT || "8080", 10);
+
+/**
+ * Reverse-proxy a request to the API server (localhost:API_SERVER_PORT).
+ * Preserves the full path + query string and streams the response back.
+ */
+function proxyToApiServer(req, res) {
+  const options = {
+    hostname: "localhost",
+    port: API_SERVER_PORT,
+    path: req.url,
+    method: req.method,
+    headers: Object.assign({}, req.headers, {
+      host: `localhost:${API_SERVER_PORT}`,
+    }),
+  };
+
+  const proxyReq = http.request(options, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode, proxyRes.headers);
+    proxyRes.pipe(res, { end: true });
+  });
+
+  proxyReq.on("error", (err) => {
+    console.error("[proxy] API server error:", err.message);
+    if (!res.headersSent) {
+      res.writeHead(502, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "API server unavailable" }));
+    }
+  });
+
+  req.pipe(proxyReq, { end: true });
+}
 
 function getAppName() {
   try {
@@ -124,6 +161,11 @@ const server = http.createServer((req, res) => {
     if (pathname === "/") {
       return serveLandingPage(req, res, landingPageTemplate, appName);
     }
+  }
+
+  // Forward /api/* requests to the API server running on the same machine.
+  if (pathname.startsWith("/api")) {
+    return proxyToApiServer(req, res);
   }
 
   serveStaticFile(pathname, res);
