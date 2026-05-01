@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, StyleSheet, Pressable, Platform, Animated } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Platform, Animated } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,10 +10,12 @@ interface ReaderControlsProps {
   visible: boolean;
   theme: ThemeName;
   percent: number;
+  currentPage?: number;
+  totalPages?: number;
   onSettingsPress: () => void;
 }
 
-export function ReaderControls({ visible, theme, percent, onSettingsPress }: ReaderControlsProps) {
+export function ReaderControls({ visible, theme, percent, currentPage, totalPages, onSettingsPress }: ReaderControlsProps) {
   const insets = useSafeAreaInsets();
   const colors = useColors();
   const themeColors = THEMES[theme];
@@ -68,6 +70,11 @@ export function ReaderControls({ visible, theme, percent, onSettingsPress }: Rea
           }
         ]}
       >
+        {currentPage != null && totalPages != null && (
+          <Text style={[styles.pageIndicator, { color: themeColors.text + 'AA' }]}>
+            {currentPage} / {totalPages}
+          </Text>
+        )}
         <View style={[styles.progressContainer, { backgroundColor: themeColors.text + '1A' }]}>
           <View style={[styles.progressFill, { width: `${Math.max(0, Math.min(100, percent))}%`, backgroundColor: themeColors.accent }]} />
         </View>
@@ -106,5 +113,10 @@ const styles = StyleSheet.create({
   progressFill: {
     height: '100%',
     borderRadius: 2,
-  }
+  },
+  pageIndicator: {
+    fontSize: 12,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
 });
