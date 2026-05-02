@@ -14,7 +14,7 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import React, { useEffect } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -66,13 +66,29 @@ export default function RootLayout() {
     Lora_700Bold,
   });
 
-  useEffect(() => {
-    if (fontsLoaded || fontError) {
+  // Guard against calling hideAsync more than once (both the font effect and
+  // the safety timeout may fire; hideAsync itself is idempotent but using a
+  // ref keeps the intent explicit and avoids any platform edge-cases).
+  const splashHiddenRef = useRef(false);
+  const hideSplash = useCallback(() => {
+    if (!splashHiddenRef.current) {
+      splashHiddenRef.current = true;
       SplashScreen.hideAsync();
     }
-  }, [fontsLoaded, fontError]);
+  }, []);
 
-  if (!fontsLoaded && !fontError) return null;
+  useEffect(() => {
+    if (fontsLoaded || fontError) {
+      hideSplash();
+    }
+  }, [fontsLoaded, fontError, hideSplash]);
+
+  // Safety fallback: dismiss the splash screen after 3 s even if font loading
+  // stalls (e.g. in debug builds where Metro asset resolution can hang).
+  useEffect(() => {
+    const timer = setTimeout(hideSplash, 3000);
+    return () => clearTimeout(timer);
+  }, [hideSplash]);
 
   return (
     <SafeAreaProvider>

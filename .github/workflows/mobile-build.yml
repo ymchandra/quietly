@@ -13,6 +13,11 @@ on:
         options:
           - android
           - ios
+      debug:
+        description: 'Build debug APK/IPA (unchecked builds a production release)'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -90,15 +95,43 @@ jobs:
         env:
           EXPO_PUBLIC_DOMAIN: localhost
 
-      - name: Build debug APK
-        working-directory: artifacts/mobile/android
-        run: ./gradlew assembleDebug --no-daemon
+      - name: Create Android signing keystore (release builds only)
+        if: github.event.inputs.debug != 'true'
+        run: |
+          # Creates a development keystore so the release APK can be installed
+          # on test devices. For public distribution, replace with a proper
+          # release keystore stored as GitHub secrets.
+          keytool -genkeypair -v \
+            -keystore artifacts/mobile/android/app/debug.keystore \
+            -alias androiddebugkey \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=Android Debug,O=Android,C=US" \
+            -noprompt
 
-      - name: Upload APK
+      - name: Build APK
+        working-directory: artifacts/mobile/android
+        run: |
+          if [ "${{ github.event.inputs.debug }}" == "true" ]; then
+            ./gradlew assembleDebug --no-daemon
+          else
+            ./gradlew assembleRelease --no-daemon
+          fi
+
+      - name: Upload debug APK
+        if: github.event.inputs.debug == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: android-apk
           path: artifacts/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
+      - name: Upload release APK
+        if: github.event.inputs.debug != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: artifacts/mobile/android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
 
   build-ios:
