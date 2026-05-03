@@ -9,6 +9,7 @@ import 'screens/settings_screen.dart';
 import 'screens/book_detail_screen.dart';
 import 'screens/reader_screen.dart';
 import 'screens/main_screen.dart';
+import 'screens/topic_books_screen.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
 final _shellNavigatorKey = GlobalKey<NavigatorState>();
@@ -50,6 +51,14 @@ final _router = GoRouter(
       builder: (_, state) =>
           ReaderScreen(bookId: int.parse(state.pathParameters['id']!)),
     ),
+    GoRoute(
+      parentNavigatorKey: _rootNavigatorKey,
+      path: '/discover/topic/:topic',
+      builder: (_, state) => TopicBooksScreen(
+        topic: state.pathParameters['topic']!,
+        label: state.uri.queryParameters['label'] ?? 'Category',
+      ),
+    ),
   ],
 );
 
@@ -81,7 +90,7 @@ class QuietlyApp extends StatelessWidget {
       ),
       scaffoldBackgroundColor: AppColors.lightBg,
       cardColor: AppColors.lightCard,
-      cardTheme: const CardTheme(color: AppColors.lightCard),
+      cardTheme: const CardThemeData(color: AppColors.lightCard),
       textTheme: GoogleFonts.interTextTheme(base.textTheme).apply(
         bodyColor: AppColors.lightFg,
         displayColor: AppColors.lightFg,
@@ -125,7 +134,7 @@ class QuietlyApp extends StatelessWidget {
       ),
       scaffoldBackgroundColor: AppColors.darkBg,
       cardColor: AppColors.darkCard,
-      cardTheme: const CardTheme(color: AppColors.darkCard),
+      cardTheme: const CardThemeData(color: AppColors.darkCard),
       textTheme: GoogleFonts.interTextTheme(base.textTheme).apply(
         bodyColor: AppColors.darkFg,
         displayColor: AppColors.darkFg,

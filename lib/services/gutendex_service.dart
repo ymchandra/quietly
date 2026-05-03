@@ -21,7 +21,7 @@ class GutendexService {
       'sort': sort,
       if (page > 1) 'page': page.toString(),
     };
-    final uri = Uri.parse('$_base/books').replace(queryParameters: params);
+    final uri = Uri.parse('$_base/books/').replace(queryParameters: params);
     final resp = await http.get(uri).timeout(_timeout);
     if (resp.statusCode != 200) throw Exception('HTTP ${resp.statusCode}');
     return GutendexResponse.fromJson(

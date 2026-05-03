@@ -1,5 +1,5 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/book.dart';
 import '../services/gutendex_service.dart';
@@ -23,12 +23,16 @@ class DiscoverScreen extends StatefulWidget {
 }
 
 class _DiscoverScreenState extends State<DiscoverScreen> {
+  static const _previewCount = 10;
   final _service = GutendexService();
   final Map<String, List<Book>> _shelves = {};
   final Map<String, bool> _loading = {};
   String _query = '';
   List<Book> _searchResults = [];
   bool _searching = false;
+  bool _searchLoading = false;
+  String? _searchError;
+  String? _catalogError;
 
   @override
   void initState() {
@@ -37,17 +41,30 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   }
 
   Future<void> _loadAllShelves() async {
-    for (final t in _topics) {
-      _loadShelf(t['topic']!);
+    setState(() => _catalogError = null);
+    final results = await Future.wait(
+      _topics.map((t) => _loadShelf(t['topic']!)),
+    );
+    if (!mounted) return;
+    if (results.every((ok) => !ok)) {
+      setState(() {
+        _catalogError = 'Could not load books. Check your internet and pull to retry.';
+      });
     }
   }
 
-  Future<void> _loadShelf(String topic) async {
+  Future<bool> _loadShelf(String topic) async {
     setState(() => _loading[topic] = true);
     try {
       final resp = await _service.fetchBooks(topic: topic);
-      if (mounted) setState(() => _shelves[topic] = resp.results);
+      if (mounted) {
+        setState(() {
+          _shelves[topic] = resp.results.take(_previewCount).toList();
+        });
+      }
+      return true;
     } catch (_) {
+      return false;
     } finally {
       if (mounted) setState(() => _loading[topic] = false);
     }
@@ -57,14 +74,32 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     setState(() {
       _query = q;
       _searching = q.isNotEmpty;
+      _searchError = null;
+      if (q.isEmpty) {
+        _searchLoading = false;
+        _searchResults = [];
+      } else {
+        _searchLoading = true;
+      }
     });
     if (q.isEmpty) return;
     try {
       final resp = await _service.fetchBooks(search: q);
       if (mounted && _query == q) {
-        setState(() => _searchResults = resp.results);
+        setState(() {
+          _searchResults = resp.results;
+          _searchLoading = false;
+        });
       }
-    } catch (_) {}
+    } catch (_) {
+      if (mounted && _query == q) {
+        setState(() {
+          _searchResults = [];
+          _searchLoading = false;
+          _searchError = 'Search failed. Check your internet and try again.';
+        });
+      }
+    }
   }
 
   @override
@@ -106,7 +141,39 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   }
 
   Widget _buildShelves() {
+    final allEmpty = _topics.every((t) {
+      final topic = t['topic']!;
+      return (_shelves[topic] ?? []).isEmpty;
+    });
+    final anyLoading = _loading.values.any((v) => v);
+    if (_catalogError != null && allEmpty && !anyLoading) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          const SizedBox(height: 80),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Column(
+              children: [
+                Text(
+                  _catalogError!,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: _loadAllShelves,
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
     return ListView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
       itemCount: _topics.length,
       itemBuilder: (context, i) {
         final t = _topics[i];
@@ -118,11 +185,23 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-              child: Text(
-                label,
-                style: GoogleFonts.lora(
-                    fontSize: 18, fontWeight: FontWeight.w600),
+              padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: GoogleFonts.lora(
+                          fontSize: 18, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => context.push(
+                      '/discover/topic/$topic?label=${Uri.encodeComponent(label)}',
+                    ),
+                    child: const Text('Show all'),
+                  ),
+                ],
               ),
             ),
             SizedBox(
@@ -130,16 +209,30 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
               child: loading
                   ? _shelfSkeleton()
                   : books.isEmpty
-                      ? const SizedBox()
+                      ? const Center(
+                          child: Text('No books for this shelf yet'),
+                        )
                       : ListView.builder(
                           scrollDirection: Axis.horizontal,
                           padding:
                               const EdgeInsets.symmetric(horizontal: 16),
-                          itemCount: books.length,
-                          itemBuilder: (ctx, j) => Padding(
-                            padding: const EdgeInsets.only(right: 12),
-                            child: BookCard(book: books[j]),
-                          ),
+                          itemCount: books.length + 1,
+                          itemBuilder: (ctx, j) {
+                            if (j == books.length) {
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 12),
+                                child: _ShowAllCard(
+                                  onTap: () => context.push(
+                                    '/discover/topic/$topic?label=${Uri.encodeComponent(label)}',
+                                  ),
+                                ),
+                              );
+                            }
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 12),
+                              child: BookCard(book: books[j]),
+                            );
+                          },
                         ),
             ),
           ],
@@ -170,8 +263,23 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   }
 
   Widget _buildSearchResults() {
-    if (_searchResults.isEmpty) {
+    if (_searchLoading) {
       return const Center(child: CircularProgressIndicator());
+    }
+    if (_searchError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Text(
+            _searchError!,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+        ),
+      );
+    }
+    if (_searchResults.isEmpty) {
+      return const Center(child: Text('No books found'));
     }
     return GridView.builder(
       padding: const EdgeInsets.all(16),
@@ -183,6 +291,43 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       ),
       itemCount: _searchResults.length,
       itemBuilder: (ctx, i) => BookCard(book: _searchResults[i]),
+    );
+  }
+}
+
+class _ShowAllCard extends StatelessWidget {
+  final VoidCallback onTap;
+  const _ShowAllCard({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        width: 120,
+        height: 180,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: cs.outline),
+          color: cs.surface,
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.arrow_forward, color: cs.primary),
+            const SizedBox(height: 8),
+            Text(
+              'Show all',
+              style: TextStyle(
+                color: cs.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

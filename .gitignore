@@ -9,17 +9,21 @@ build/
 
 # Android
 android/.gradle/
+android/.kotlin/
+android/app/.cxx/
 android/local.properties
 android/captures/
 android/app/debug
 android/app/profile
 android/app/release
 android/key.properties
+android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
 
 # iOS
 ios/.symlinks/
 ios/Flutter/flutter_export_environment.sh
 ios/Flutter/Generated.xcconfig
+ios/Flutter/ephemeral/
 ios/Pods/
 ios/Runner.xcworkspace/
 *.pbxproj.bak
