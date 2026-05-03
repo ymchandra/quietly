@@ -68,6 +68,16 @@ jobs:
           flutter-version: '3.27.4'
           channel: 'stable'
           cache: true
+      - name: Prepare Android local.properties
+        run: |
+          echo "flutter.sdk=$FLUTTER_ROOT" > android/local.properties
+          if [ -n "$ANDROID_SDK_ROOT" ]; then
+            echo "sdk.dir=$ANDROID_SDK_ROOT" >> android/local.properties
+          elif [ -n "$ANDROID_HOME" ]; then
+            echo "sdk.dir=$ANDROID_HOME" >> android/local.properties
+          fi
+      - name: Ensure Gradle wrapper is executable
+        run: chmod +x android/gradlew
       - name: Install dependencies
         run: flutter pub get
       - name: Build APK (Gradle)
