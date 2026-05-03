@@ -28,6 +28,10 @@ class Book {
   final Map<String, String> formats;
   final int downloadCount;
 
+  /// Whether this book is known to have publicly accessible full text.
+  /// Derived from the Open Library `public_scan_b` / `has_fulltext` fields.
+  final bool hasFullText;
+
   const Book({
     required this.id,
     required this.title,
@@ -37,6 +41,7 @@ class Book {
     required this.languages,
     required this.formats,
     required this.downloadCount,
+    this.hasFullText = false,
   });
 
   String? get coverUrl => formats['image/jpeg'];
@@ -61,6 +66,7 @@ class Book {
       languages: List<String>.from(json['languages'] as List? ?? []),
       formats: rawFormats.map((k, v) => MapEntry(k, v.toString())),
       downloadCount: json['download_count'] as int? ?? 0,
+      hasFullText: json['has_full_text'] as bool? ?? false,
     );
   }
 
@@ -73,6 +79,7 @@ class Book {
         'languages': languages,
         'formats': formats,
         'download_count': downloadCount,
+        'has_full_text': hasFullText,
       };
 }
 

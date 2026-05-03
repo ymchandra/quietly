@@ -21,18 +21,53 @@ class BookCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: book.coverUrl != null
-                    ? CachedNetworkImage(
-                        imageUrl: book.coverUrl!,
-                        width: 120,
-                        height: 180,
-                        fit: BoxFit.cover,
-                        placeholder: (_, __) => _placeholder(cs),
-                        errorWidget: (_, __, ___) => _placeholder(cs),
-                      )
-                    : _placeholder(cs),
+              Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: book.coverUrl != null
+                        ? CachedNetworkImage(
+                            imageUrl: book.coverUrl!,
+                            width: 120,
+                            height: 180,
+                            fit: BoxFit.cover,
+                            placeholder: (_, __) => _placeholder(cs),
+                            errorWidget: (_, __, ___) => _placeholder(cs),
+                          )
+                        : _placeholder(cs),
+                  ),
+                  if (!book.hasFullText)
+                    Positioned(
+                      bottom: 6,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.65),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.lock_outline,
+                                  size: 10, color: Colors.white),
+                              SizedBox(width: 3),
+                              Text(
+                                'Not free',
+                                style: TextStyle(
+                                    fontSize: 10,
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w500),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(height: 6),
               Text(
