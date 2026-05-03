@@ -55,6 +55,36 @@ class BookListRow extends StatelessWidget {
                       style: TextStyle(
                           fontSize: 13,
                           color: cs.onSurface.withValues(alpha: 0.6))),
+                  const SizedBox(height: 6),
+                  if (!book.hasFullText)
+                    Row(
+                      children: [
+                        Icon(Icons.lock_outline,
+                            size: 12,
+                            color: cs.onSurface.withValues(alpha: 0.45)),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Not freely available',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: cs.onSurface.withValues(alpha: 0.45)),
+                        ),
+                      ],
+                    )
+                  else
+                    Row(
+                      children: [
+                        Icon(Icons.menu_book_outlined,
+                            size: 12, color: cs.primary.withValues(alpha: 0.7)),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Free to read',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: cs.primary.withValues(alpha: 0.7)),
+                        ),
+                      ],
+                    ),
                   if (progress != null) ...[
                     const SizedBox(height: 8),
                     ClipRRect(

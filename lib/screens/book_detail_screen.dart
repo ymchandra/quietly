@@ -165,6 +165,11 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                                 color:
                                     cs.onSurface.withValues(alpha: 0.5))),
                       ]),
+                      const SizedBox(height: 10),
+                      _AvailabilityBadge(
+                        checkingReadability: _checkingReadability,
+                        canRead: _canRead,
+                      ),
                     ],
                   ),
                 ),
@@ -211,11 +216,30 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
             ),
             if (!_checkingReadability && !_canRead) ...[
               const SizedBox(height: 8),
-              Text(
-                'This title appears to be image-only in Open Library. Reader supports text sources only.',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: cs.onSurface.withValues(alpha: 0.7),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: cs.errorContainer,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.info_outline,
+                        size: 16, color: cs.onErrorContainer),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'This title is not available as readable text in Open Library. '
+                        'Only text-based books are supported by the reader.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: cs.onErrorContainer,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -274,6 +298,85 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _AvailabilityBadge extends StatelessWidget {
+  final bool checkingReadability;
+  final bool canRead;
+
+  const _AvailabilityBadge({
+    required this.checkingReadability,
+    required this.canRead,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    if (checkingReadability) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 12,
+            height: 12,
+            child: CircularProgressIndicator(
+                strokeWidth: 1.5, color: cs.outline),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            'Checking availability…',
+            style: TextStyle(
+                fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6)),
+          ),
+        ],
+      );
+    }
+    if (canRead) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: cs.primaryContainer,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.menu_book_outlined,
+                size: 13, color: cs.onPrimaryContainer),
+            const SizedBox(width: 4),
+            Text(
+              'Free to read',
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: cs.onPrimaryContainer),
+            ),
+          ],
+        ),
+      );
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: cs.errorContainer,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.lock_outline, size: 13, color: cs.onErrorContainer),
+          const SizedBox(width: 4),
+          Text(
+            'Not freely available',
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: cs.onErrorContainer),
+          ),
+        ],
       ),
     );
   }
