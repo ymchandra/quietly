@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import '../models/book.dart';
 
@@ -183,23 +184,93 @@ class OpenLibraryService {
           maxAttempts: 2,
         );
         if (resp.statusCode == 200) {
+          // Skip responses with a non-text content-type (e.g. image/jpeg, application/pdf).
+          final contentType = (resp.headers['content-type'] ?? '').toLowerCase();
+          final isNonText = contentType.isNotEmpty &&
+              !contentType.contains('text/') &&
+              !contentType.contains('application/octet-stream');
+          if (isNonText) {
+            onDebug?.call(
+              OpenLibraryDebugSnapshot(
+                requestUrl: url,
+                statusCode: resp.statusCode,
+                success: false,
+                bodyLength: resp.bodyBytes.length,
+                bodyPreview: 'Content-Type: $contentType',
+                resultCount: null,
+                error: 'Non-text content type: $contentType',
+                timestamp: DateTime.now(),
+              ),
+            );
+            continue;
+          }
+
+          // Skip binary files detected by magic bytes (PDF, images, ZIP/EPUB, etc.).
+          if (_isBinaryContent(resp.bodyBytes)) {
+            onDebug?.call(
+              OpenLibraryDebugSnapshot(
+                requestUrl: url,
+                statusCode: resp.statusCode,
+                success: false,
+                bodyLength: resp.bodyBytes.length,
+                bodyPreview: 'Binary content detected (magic bytes)',
+                resultCount: null,
+                error: 'Binary/image content — not readable text',
+                timestamp: DateTime.now(),
+              ),
+            );
+            continue;
+          }
+
           final raw = utf8.decode(resp.bodyBytes, allowMalformed: true);
+
+          // A plain-text URL that returns an HTML page is almost certainly an
+          // error page (e.g. archive.org 404).  Detect and handle it.
+          final trimmedLower = raw.trimLeft().toLowerCase();
+          final looksLikeHtml = trimmedLower.startsWith('<!doctype') ||
+              trimmedLower.startsWith('<html');
+          final expectHtml =
+              url.contains('.html') || url.contains('/html');
+
+          String processedText;
+          if (expectHtml || looksLikeHtml) {
+            processedText = cleanGutenbergText(htmlToPlainText(raw));
+          } else {
+            processedText = cleanGutenbergText(raw);
+          }
+
+          // Skip results that are too short to be genuine book content
+          // (likely an error page or an empty/stub file).
+          if (processedText.length < 500) {
+            onDebug?.call(
+              OpenLibraryDebugSnapshot(
+                requestUrl: url,
+                statusCode: resp.statusCode,
+                success: false,
+                bodyLength: resp.bodyBytes.length,
+                bodyPreview: processedText.isEmpty ? '(empty)' : processedText,
+                resultCount: null,
+                error:
+                    'Insufficient content (${processedText.length} chars after cleaning)',
+                timestamp: DateTime.now(),
+              ),
+            );
+            continue;
+          }
+
           onDebug?.call(
             OpenLibraryDebugSnapshot(
               requestUrl: url,
               statusCode: resp.statusCode,
               success: true,
               bodyLength: resp.bodyBytes.length,
-              bodyPreview: _preview(raw),
+              bodyPreview: _preview(processedText),
               resultCount: null,
               error: null,
               timestamp: DateTime.now(),
             ),
           );
-          if (url.contains('.html') || url.contains('html')) {
-            return cleanGutenbergText(htmlToPlainText(raw));
-          }
-          return cleanGutenbergText(raw);
+          return processedText;
         }
         onDebug?.call(
           OpenLibraryDebugSnapshot(
@@ -229,7 +300,8 @@ class OpenLibraryService {
         continue;
       }
     }
-    throw Exception('Could not fetch book text');
+    throw Exception('Could not load text for this book. '
+        'The available sources may be image-only or temporarily unavailable.');
   }
 
   Uri _buildListUri({
@@ -668,6 +740,44 @@ class OpenLibraryService {
       return 'Rate limited by Open Library. Please retry shortly.';
     }
     return msg;
+  }
+
+  /// Returns `true` when [bytes] has magic bytes indicating a binary format
+  /// (PDF, JPEG, PNG, GIF, ZIP/EPUB, DjVu, …).  Such files are not readable
+  /// as plain text and should be skipped.
+  bool _isBinaryContent(Uint8List bytes) {
+    if (bytes.length < 4) return false;
+    // PDF: %PDF
+    if (bytes[0] == 0x25 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x44 &&
+        bytes[3] == 0x46) return true;
+    // JPEG: FF D8
+    if (bytes[0] == 0xFF && bytes[1] == 0xD8) return true;
+    // PNG: 89 PNG
+    if (bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47) return true;
+    // GIF: GIF8
+    if (bytes[0] == 0x47 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x38) return true;
+    // ZIP / EPUB: PK
+    if (bytes[0] == 0x50 && bytes[1] == 0x4B) return true;
+    // DjVu: AT&T
+    if (bytes[0] == 0x41 &&
+        bytes[1] == 0x54 &&
+        bytes[2] == 0x26 &&
+        bytes[3] == 0x54) return true;
+    // Heuristic: >5 % null bytes in the first 512 bytes → binary
+    final sample = bytes.length < 512 ? bytes.length : 512;
+    int nulls = 0;
+    for (var i = 0; i < sample; i++) {
+      if (bytes[i] == 0) nulls++;
+    }
+    return nulls > (sample * 0.05).floor();
   }
 
   String _preview(String text, {int max = 350}) {
