@@ -331,7 +331,9 @@ class OpenLibraryService {
     String iaId, {
     void Function(OpenLibraryDebugSnapshot)? onDebug,
   }) async {
-    final manifestUrl = 'https://iiif.archive.org/iiif/$iaId\$/manifest.json';
+    // Archive.org's IIIF identifier format appends a literal '$' after the item id.
+    final manifestUrl = 'https://iiif.archive.org/iiif/$iaId'
+        r'$/manifest.json';
     try {
       final resp =
           await _getWithRetry(Uri.parse(manifestUrl), timeout: _timeout);
@@ -353,8 +355,10 @@ class OpenLibraryService {
       final sequences = data['sequences'] as List<dynamic>? ?? [];
       if (sequences.isEmpty) return const [];
 
-      final canvases =
-          (sequences.first as Map<String, dynamic>)['canvases'] as List<dynamic>? ?? [];
+      final canvases = (sequences.first is Map<String, dynamic>
+              ? (sequences.first as Map<String, dynamic>)['canvases']
+              : null) as List<dynamic>? ??
+          [];
       final imageUrls = <String>[];
 
       for (final canvas in canvases) {
@@ -648,6 +652,8 @@ class OpenLibraryService {
   List<String> _collectIaIds(Map<String, dynamic> source) {
     final ia = source['ia'];
     if (ia is! List || ia.isEmpty) return const [];
+    // Limit to 3 identifiers: each may trigger a IIIF request, so we
+    // avoid excessive network calls while still covering alternate editions.
     return ia.take(3).map((id) => id.toString()).toList();
   }
 
