@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -31,11 +32,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
   final _openLibrary = OpenLibraryService();
   final _storage = StorageService();
 
-  String? _text;
+  BookContent? _content;
   bool _loading = true;
   String? _error;
   final List<OpenLibraryDebugSnapshot> _debugSnapshots = [];
   bool _showDebugPanel = false;
+
+  bool get _isImageBased => _content?.isImageBased ?? false;
 
   List<String> _pages = [];
   late PageController _pageController;
@@ -88,7 +91,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         );
         if (mounted) {
           setState(() {
-            _text = offline;
+            _content = BookContent.text(offline);
             _loading = false;
           });
           _buildPages();
@@ -111,13 +114,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
         );
       }
       final book = initial ?? await _openLibrary.fetchBook(widget.bookId);
-      final text = await _openLibrary.fetchBookText(
+      final content = await _openLibrary.fetchBookContent(
         book,
         onDebug: _recordDebug,
       );
       if (mounted) {
         setState(() {
-          _text = text;
+          _content = content;
           _loading = false;
         });
         _buildPages();
@@ -145,12 +148,38 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _buildPages() {
+    final content = _content;
+    if (content == null) return;
+
+    if (content.isImageBased) {
+      final imageUrls = content.images!;
+      if (imageUrls.isEmpty) return;
+      final savedPercent =
+          context.read<LibraryProvider>().getProgress(widget.bookId)?.percent ??
+              0;
+      final startPage = (savedPercent * imageUrls.length)
+          .floor()
+          .clamp(0, imageUrls.length - 1);
+      setState(() {
+        _pages = imageUrls;
+        _currentPage = startPage;
+      });
+      if (startPage > 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _pageController.jumpToPage(startPage);
+        });
+      }
+      _scheduleHide();
+      return;
+    }
+
+    // Text-based content.
     final size = MediaQuery.of(context).size;
-    if (_text == null || size.isEmpty) return;
+    if (content.text == null || size.isEmpty) return;
     final settings =
         context.read<ReaderSettingsProvider>().forBook(widget.bookId);
     final pages = _splitPages(
-      text: _text!,
+      text: content.text!,
       textWidth: size.width - 40,
       textHeight: size.height - 120,
       fontSize: settings.fontSize,
@@ -263,11 +292,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   String _friendlyReaderError(String error) {
-    if (error.contains('image-only') ||
+    if (error.contains('No readable content') ||
+        error.contains('image-only') ||
         error.contains('No readable text source') ||
         error.contains('Could not load text')) {
-      return 'This book\'s text is not available online. '
-          'The edition on file may be image-only or scanned pages without extractable text.';
+      return 'This book\'s content is not publicly accessible. '
+          'The edition may be restricted or temporarily unavailable.';
     }
     if (error.contains('timed out') || error.contains('TimeoutException')) {
       return 'The download timed out. Please check your connection and try again.';
@@ -278,6 +308,36 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return 'No internet connection. Please check your network and retry.';
     }
     return error;
+  }
+
+  Widget _buildImagePage(int index) {
+    return Container(
+      color: Colors.black,
+      child: CachedNetworkImage(
+        imageUrl: _pages[index],
+        fit: BoxFit.contain,
+        placeholder: (context, url) => const Center(
+          child: CircularProgressIndicator(color: Colors.white54),
+        ),
+        errorWidget: (context, url, error) => const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.image_not_supported_outlined,
+                color: Colors.white54,
+                size: 48,
+              ),
+              SizedBox(height: 12),
+              Text(
+                'Image unavailable',
+                style: TextStyle(color: Colors.white54),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildDebugPanel() {
@@ -391,7 +451,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                         ),
                         const SizedBox(height: 20),
                         Text(
-                          'Text Not Available',
+                          'Content Not Available',
                           style: TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.w600,
@@ -444,7 +504,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final accentColor = colors['accent']!;
 
     final size = MediaQuery.of(context).size;
-    if (_lastSize != size && _text != null) {
+    if (_lastSize != size && _content != null && !_isImageBased) {
       _lastSize = size;
       WidgetsBinding.instance.addPostFrameCallback((_) => _buildPages());
     }
@@ -484,22 +544,28 @@ class _ReaderScreenState extends State<ReaderScreen> {
                           child: child!,
                         );
                       },
-                      child: Container(
-                        color: bgColor,
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 60, 20, 80),
-                          child: Text(_pages[i], style: textStyle),
-                        ),
-                      ),
+                      child: _isImageBased
+                          ? _buildImagePage(i)
+                          : Container(
+                              color: bgColor,
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(20, 60, 20, 80),
+                                child: Text(_pages[i], style: textStyle),
+                              ),
+                            ),
                     ),
                   ),
             ReaderControls(
               visible: _showControls,
               currentPage: _currentPage + 1,
               totalPages: _pages.length,
-              bgColor: bgColor.withValues(alpha: 0.95),
-              textColor: textColor,
-              accentColor: accentColor,
+              bgColor: _isImageBased
+                  ? Colors.black.withValues(alpha: 0.7)
+                  : bgColor.withValues(alpha: 0.95),
+              textColor: _isImageBased ? Colors.white : textColor,
+              accentColor: _isImageBased ? Colors.white70 : accentColor,
+              showSettings: !_isImageBased,
               onBack: () => Navigator.pop(context),
               onSettings: () {
                 _hideTimer?.cancel();

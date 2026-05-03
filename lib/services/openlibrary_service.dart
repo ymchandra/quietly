@@ -5,6 +5,27 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import '../models/book.dart';
 
+/// Represents book content that can be read in the reader — either plain text
+/// or an ordered list of image page URLs (e.g. scanned pages from archive.org).
+class BookContent {
+  /// Plain text of the book. Non-null when [isImageBased] is false.
+  final String? text;
+
+  /// Ordered list of image URLs, one per scanned page. Non-null when
+  /// [isImageBased] is true.
+  final List<String>? images;
+
+  const BookContent.text(String text)
+      : text = text,
+        images = null;
+
+  const BookContent.images(List<String> images)
+      : images = images,
+        text = null;
+
+  bool get isImageBased => images != null;
+}
+
 class OpenLibraryDebugSnapshot {
   final String requestUrl;
   final int? statusCode;
@@ -304,6 +325,152 @@ class OpenLibraryService {
         'The available sources may be image-only or temporarily unavailable.');
   }
 
+  /// Fetches the IIIF manifest for the given archive.org item and returns an
+  /// ordered list of page image URLs, or an empty list if unavailable.
+  Future<List<String>> _fetchIIIFImagePages(
+    String iaId, {
+    void Function(OpenLibraryDebugSnapshot)? onDebug,
+  }) async {
+    // The '\$' is a literal '$' that is part of archive.org's IIIF URL format:
+    // https://iiif.archive.org/iiif/{item_id}$/manifest.json
+    final manifestUrl = 'https://iiif.archive.org/iiif/$iaId\$/manifest.json';
+    try {
+      final resp =
+          await _getWithRetry(Uri.parse(manifestUrl), timeout: _timeout);
+      if (resp.statusCode != 200) {
+        onDebug?.call(OpenLibraryDebugSnapshot(
+          requestUrl: manifestUrl,
+          statusCode: resp.statusCode,
+          success: false,
+          bodyLength: resp.bodyBytes.length,
+          bodyPreview: _preview(resp.body),
+          resultCount: 0,
+          error: 'HTTP ${resp.statusCode}',
+          timestamp: DateTime.now(),
+        ));
+        return const [];
+      }
+
+      final data = json.decode(resp.body) as Map<String, dynamic>;
+      final sequences = data['sequences'] as List<dynamic>? ?? [];
+      if (sequences.isEmpty) return const [];
+
+      final canvases = (sequences.first is Map<String, dynamic>
+              ? (sequences.first as Map<String, dynamic>)['canvases']
+              : null) as List<dynamic>? ??
+          [];
+      final imageUrls = <String>[];
+
+      for (final canvas in canvases) {
+        if (canvas is! Map<String, dynamic>) continue;
+        final images = canvas['images'] as List<dynamic>? ?? [];
+        if (images.isEmpty) continue;
+        final first = images.first;
+        if (first is! Map<String, dynamic>) continue;
+        final resource = first['resource'];
+        if (resource == null) continue;
+
+        String? imageUrl;
+        if (resource is Map<String, dynamic>) {
+          imageUrl = resource['@id'] as String?;
+        } else if (resource is String) {
+          imageUrl = resource;
+        }
+
+        if (imageUrl != null && imageUrl.isNotEmpty) {
+          imageUrls.add(imageUrl);
+        }
+      }
+
+      onDebug?.call(OpenLibraryDebugSnapshot(
+        requestUrl: manifestUrl,
+        statusCode: resp.statusCode,
+        success: imageUrls.isNotEmpty,
+        bodyLength: resp.bodyBytes.length,
+        bodyPreview: imageUrls.isEmpty
+            ? 'No image pages found in manifest'
+            : 'Found ${imageUrls.length} page(s)',
+        resultCount: imageUrls.length,
+        error: imageUrls.isEmpty ? 'Manifest contained no image URLs' : null,
+        timestamp: DateTime.now(),
+      ));
+
+      return imageUrls;
+    } catch (e) {
+      onDebug?.call(OpenLibraryDebugSnapshot(
+        requestUrl: manifestUrl,
+        statusCode: null,
+        success: false,
+        bodyLength: 0,
+        bodyPreview: '',
+        resultCount: 0,
+        error: 'IIIF manifest error: ${_friendlyNetworkError(e)}',
+        timestamp: DateTime.now(),
+      ));
+      return const [];
+    }
+  }
+
+  /// Returns the archive.org identifiers stored in [book] formats, or extracted
+  /// from its text-source URLs as a fallback.
+  List<String> _getIaIds(Book book) {
+    final stored = book.formats['openlibrary/ia_ids'];
+    if (stored != null && stored.isNotEmpty) {
+      return stored
+          .split('|')
+          .where((s) => s.trim().isNotEmpty)
+          .map((s) => s.trim())
+          .toList();
+    }
+    // Fallback: derive IDs from text_sources URLs
+    final textSources = book.formats['openlibrary/text_sources'];
+    if (textSources == null || textSources.isEmpty) return const [];
+    final iaIds = <String>{};
+    for (final url in textSources.split('|')) {
+      final match =
+          RegExp(r'archive\.org/download/([^/]+)/').firstMatch(url.trim());
+      if (match != null) iaIds.add(match.group(1)!);
+    }
+    return iaIds.toList();
+  }
+
+  /// Loads book content — first as plain text, falling back to scanned image
+  /// pages when text is unavailable. Throws if neither is accessible.
+  Future<BookContent> fetchBookContent(
+    Book book, {
+    void Function(OpenLibraryDebugSnapshot)? onDebug,
+  }) async {
+    // Try text first.
+    try {
+      final text = await fetchBookText(book, onDebug: onDebug);
+      return BookContent.text(text);
+    } catch (e) {
+      // Text not available; record and proceed to image fallback.
+      onDebug?.call(OpenLibraryDebugSnapshot(
+        requestUrl: 'openlibrary://book/${book.id}/text-fetch-failed',
+        statusCode: null,
+        success: false,
+        bodyLength: 0,
+        bodyPreview: '',
+        resultCount: 0,
+        error: 'Text unavailable, trying image pages: $e',
+        timestamp: DateTime.now(),
+      ));
+    }
+
+    // Try scanned image pages from archive.org via IIIF.
+    final iaIds = _getIaIds(book);
+    for (final iaId in iaIds) {
+      final pages = await _fetchIIIFImagePages(iaId, onDebug: onDebug);
+      if (pages.isNotEmpty) return BookContent.images(pages);
+    }
+
+    throw Exception(
+      'No readable content available for this book. '
+      'The edition may be restricted or temporarily unavailable.',
+    );
+  }
+
   Uri _buildListUri({
     String? topic,
     String? search,
@@ -384,6 +551,10 @@ class OpenLibraryService {
     if (textSources.isNotEmpty) {
       formats['openlibrary/text_sources'] = textSources.join('|');
       formats['text/plain; charset=utf-8'] = textSources.first;
+    }
+    final iaIds = _collectIaIds(doc);
+    if (iaIds.isNotEmpty) {
+      formats['openlibrary/ia_ids'] = iaIds.join('|');
     }
 
     return Book(
@@ -486,6 +657,14 @@ class OpenLibraryService {
     readList('subject_facet');
     readList('subject_key');
     return values.take(20).toList();
+  }
+
+  List<String> _collectIaIds(Map<String, dynamic> source) {
+    final ia = source['ia'];
+    if (ia is! List || ia.isEmpty) return const [];
+    // Limit to 3 identifiers: each may trigger a IIIF request, so we
+    // avoid excessive network calls while still covering alternate editions.
+    return ia.take(3).map((id) => id.toString()).toList();
   }
 
   List<String> _collectTextSources(Map<String, dynamic> source) {

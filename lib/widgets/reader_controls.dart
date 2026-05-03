@@ -7,6 +7,7 @@ class ReaderControls extends StatelessWidget {
   final Color bgColor;
   final Color textColor;
   final Color accentColor;
+  final bool showSettings;
   final VoidCallback onBack;
   final VoidCallback onSettings;
 
@@ -18,6 +19,7 @@ class ReaderControls extends StatelessWidget {
     required this.bgColor,
     required this.textColor,
     required this.accentColor,
+    this.showSettings = true,
     required this.onBack,
     required this.onSettings,
   });
@@ -51,10 +53,11 @@ class ReaderControls extends StatelessWidget {
                       icon: Icon(Icons.arrow_back, color: textColor),
                       onPressed: onBack,
                     ),
-                    IconButton(
-                      icon: Icon(Icons.text_fields, color: textColor),
-                      onPressed: onSettings,
-                    ),
+                    if (showSettings)
+                      IconButton(
+                        icon: Icon(Icons.text_fields, color: textColor),
+                        onPressed: onSettings,
+                      ),
                   ],
                 ),
               ),
