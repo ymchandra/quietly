@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -261,6 +262,24 @@ class _ReaderScreenState extends State<ReaderScreen> {
     setState(() => _debugSnapshots.add(snapshot));
   }
 
+  String _friendlyReaderError(String error) {
+    if (error.contains('image-only') ||
+        error.contains('No readable text source') ||
+        error.contains('Could not load text')) {
+      return 'This book\'s text is not available online. '
+          'The edition on file may be image-only or scanned pages without extractable text.';
+    }
+    if (error.contains('timed out') || error.contains('TimeoutException')) {
+      return 'The download timed out. Please check your connection and try again.';
+    }
+    if (error.contains('No internet') ||
+        error.contains('Network') ||
+        error.contains('SocketException')) {
+      return 'No internet connection. Please check your network and retry.';
+    }
+    return error;
+  }
+
   Widget _buildDebugPanel() {
     final cs = Theme.of(context).colorScheme;
     return Container(
@@ -337,6 +356,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
           body: Center(child: CircularProgressIndicator()));
     }
     if (_error != null) {
+      final cs = Theme.of(context).colorScheme;
       return Scaffold(
         appBar: AppBar(
           actions: [
@@ -360,27 +380,50 @@ class _ReaderScreenState extends State<ReaderScreen> {
               Expanded(
                 child: Center(
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.error_outline, size: 48),
-                        const SizedBox(height: 12),
-                        const Text('Failed to load book'),
-                        const SizedBox(height: 6),
+                        Icon(
+                          Icons.menu_book_outlined,
+                          size: 64,
+                          color: cs.onSurface.withValues(alpha: 0.35),
+                        ),
+                        const SizedBox(height: 20),
                         Text(
-                          _error!,
-                          textAlign: TextAlign.center,
+                          'Text Not Available',
                           style: TextStyle(
-                            fontSize: 12,
-                            color:
-                                Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+                            fontSize: 20,
+                            fontWeight: FontWeight.w600,
+                            color: cs.onSurface,
                           ),
                         ),
-                        const SizedBox(height: 12),
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('Go Back'),
+                        const SizedBox(height: 10),
+                        Text(
+                          _friendlyReaderError(_error!),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: cs.onSurface.withValues(alpha: 0.65),
+                            height: 1.5,
+                          ),
+                        ),
+                        const SizedBox(height: 28),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: () => Navigator.pop(context),
+                              icon: const Icon(Icons.arrow_back, size: 18),
+                              label: const Text('Go Back'),
+                            ),
+                            const SizedBox(width: 12),
+                            FilledButton.icon(
+                              onPressed: _load,
+                              icon: const Icon(Icons.refresh, size: 18),
+                              label: const Text('Retry'),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -428,10 +471,26 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     controller: _pageController,
                     onPageChanged: _onPageChanged,
                     itemCount: _pages.length,
-                    itemBuilder: (ctx, i) => Padding(
-                      padding:
-                          const EdgeInsets.fromLTRB(20, 60, 20, 80),
-                      child: Text(_pages[i], style: textStyle),
+                    itemBuilder: (ctx, i) => AnimatedBuilder(
+                      animation: _pageController,
+                      builder: (context, child) {
+                        double pageOffset = 0.0;
+                        if (_pageController.hasClients &&
+                            _pageController.page != null) {
+                          pageOffset = i - _pageController.page!;
+                        }
+                        return _PageTurnItem(
+                          pageOffset: pageOffset,
+                          child: child!,
+                        );
+                      },
+                      child: Container(
+                        color: bgColor,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 60, 20, 80),
+                          child: Text(_pages[i], style: textStyle),
+                        ),
+                      ),
                     ),
                   ),
             ReaderControls(
@@ -569,3 +628,68 @@ class _ReaderDebugSnapshotTile extends StatelessWidget {
   }
 }
 
+/// Wraps a reader page and applies a 3D perspective rotation during page
+/// transitions, mimicking the feel of turning a physical book page.
+///
+/// [pageOffset] is the fractional distance from the current page index:
+///   0.0  → fully visible current page
+///  -1.0  → fully off-screen to the left (already turned)
+///   1.0  → fully off-screen to the right (not yet turned)
+class _PageTurnItem extends StatelessWidget {
+  final double pageOffset;
+  final Widget child;
+
+  const _PageTurnItem({
+    required this.pageOffset,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = pageOffset.clamp(-1.0, 1.0);
+    final absT = t.abs();
+
+    // No transform needed when the page is fully in view.
+    if (absT < 0.001) return child;
+
+    // Pages rotate around the left spine (book binding) just like a real book.
+    final angle = t * (math.pi / 2.0);
+    final matrix = Matrix4.identity()
+      ..setEntry(3, 2, 0.001) // perspective depth
+      ..rotateY(angle);
+
+    return Transform(
+      transform: matrix,
+      alignment: Alignment.centerLeft,
+      child: Stack(
+        children: [
+          child,
+          // Gradient shadow that grows as the page turns, giving depth.
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    // Outgoing page (t<0): shadow on right edge (turning edge).
+                    // Incoming page (t>0): shadow on left edge (spine side).
+                    begin: t > 0
+                        ? Alignment.centerLeft
+                        : Alignment.centerRight,
+                    end: t > 0
+                        ? Alignment.centerRight
+                        : Alignment.centerLeft,
+                    colors: [
+                      Colors.black.withValues(alpha: absT * 0.45),
+                      Colors.transparent,
+                    ],
+                    stops: const [0.0, 0.65],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
