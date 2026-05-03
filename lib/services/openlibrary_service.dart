@@ -562,11 +562,11 @@ class OpenLibraryService {
     // A book is considered to have accessible full text when the API marks it
     // as a public scan, has full text, or has associated archive.org / Gutenberg IDs.
     final publicScan = doc['public_scan_b'] == true;
-    final hasFulltext = doc['has_fulltext'] == true;
+    final apiHasFulltext = doc['has_fulltext'] == true;
     final hasIa = (doc['ia'] is List && (doc['ia'] as List).isNotEmpty);
     final hasGutenberg = (doc['id_project_gutenberg'] is List &&
         (doc['id_project_gutenberg'] as List).isNotEmpty);
-    final hasFullText = publicScan || hasFulltext || hasIa || hasGutenberg;
+    final hasFullText = publicScan || apiHasFulltext || hasIa || hasGutenberg;
 
     return Book(
       id: id,
@@ -650,6 +650,9 @@ class OpenLibraryService {
       downloadCount: primary.downloadCount > 0
           ? primary.downloadCount
           : fallback.downloadCount,
+      // Use OR so that availability detected in either source is preserved:
+      // primary may carry the fresh `public_scan_b` flag while fallback may
+      // have IA identifiers discovered earlier.
       hasFullText: primary.hasFullText || fallback.hasFullText,
     );
   }
