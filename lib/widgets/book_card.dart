@@ -11,44 +11,48 @@ class BookCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return GestureDetector(
-      onTap: () => context.push('/book/${book.id}'),
-      child: SizedBox(
-        width: 120,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: book.coverUrl != null
-                  ? CachedNetworkImage(
-                      imageUrl: book.coverUrl!,
-                      width: 120,
-                      height: 180,
-                      fit: BoxFit.cover,
-                      placeholder: (_, __) => _placeholder(cs),
-                      errorWidget: (_, __, ___) => _placeholder(cs),
-                    )
-                  : _placeholder(cs),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              book.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.lora(
-                  fontSize: 13, fontWeight: FontWeight.w500),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              book.authorName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  fontSize: 11,
-                  color: cs.onSurface.withValues(alpha: 0.6)),
-            ),
-          ],
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => context.push('/book/${book.id}', extra: book),
+        child: SizedBox(
+          width: 120,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: book.coverUrl != null
+                    ? CachedNetworkImage(
+                        imageUrl: book.coverUrl!,
+                        width: 120,
+                        height: 180,
+                        fit: BoxFit.cover,
+                        placeholder: (_, __) => _placeholder(cs),
+                        errorWidget: (_, __, ___) => _placeholder(cs),
+                      )
+                    : _placeholder(cs),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                book.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.lora(
+                    fontSize: 13, fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                book.authorName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 11,
+                    color: cs.onSurface.withValues(alpha: 0.6)),
+              ),
+            ],
+          ),
         ),
       ),
     );

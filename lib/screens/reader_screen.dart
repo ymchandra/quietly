@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -8,26 +9,32 @@ import '../models/book.dart';
 import '../models/reader_settings.dart';
 import '../providers/library_provider.dart';
 import '../providers/reader_settings_provider.dart';
-import '../services/gutendex_service.dart';
+import '../services/openlibrary_service.dart';
 import '../services/storage_service.dart';
 import '../widgets/reader_controls.dart';
 import '../widgets/reader_settings_sheet.dart';
 
 class ReaderScreen extends StatefulWidget {
   final int bookId;
-  const ReaderScreen({super.key, required this.bookId});
+  final Book? initialBook;
+  const ReaderScreen({
+    super.key,
+    required this.bookId,
+    this.initialBook,
+  });
   @override
   State<ReaderScreen> createState() => _ReaderScreenState();
 }
 
 class _ReaderScreenState extends State<ReaderScreen> {
-  final _gutendex = GutendexService();
+  final _openLibrary = OpenLibraryService();
   final _storage = StorageService();
 
   String? _text;
-  Book? _book;
   bool _loading = true;
   String? _error;
+  final List<OpenLibraryDebugSnapshot> _debugSnapshots = [];
+  bool _showDebugPanel = false;
 
   List<String> _pages = [];
   late PageController _pageController;
@@ -57,43 +64,76 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Future<void> _load() async {
+    if (mounted) {
+      setState(() {
+        _debugSnapshots.clear();
+        _showDebugPanel = false;
+      });
+    }
     try {
       final offline = await _storage.getOfflineText(widget.bookId);
       if (offline != null) {
-        final lib = context.read<LibraryProvider>();
-        final book = lib.downloaded.firstWhere(
-          (b) => b.id == widget.bookId,
-          orElse: () => Book(
-              id: widget.bookId,
-              title: '',
-              authors: [],
-              subjects: [],
-              bookshelves: [],
-              languages: [],
-              formats: {},
-              downloadCount: 0),
+        _recordDebug(
+          OpenLibraryDebugSnapshot(
+            requestUrl: 'reader://book/${widget.bookId}/offline',
+            statusCode: null,
+            success: true,
+            bodyLength: offline.length,
+            bodyPreview: 'Loaded offline text from local storage.',
+            resultCount: 1,
+            error: null,
+            timestamp: DateTime.now(),
+          ),
         );
         if (mounted) {
           setState(() {
             _text = offline;
-            _book = book;
             _loading = false;
           });
           _buildPages();
         }
         return;
       }
-      final book = await _gutendex.fetchBook(widget.bookId);
-      final text = await _gutendex.fetchBookText(book);
+      final initial = widget.initialBook;
+      if (initial != null) {
+        _recordDebug(
+          OpenLibraryDebugSnapshot(
+            requestUrl: 'reader://book/${widget.bookId}/initial-book',
+            statusCode: null,
+            success: true,
+            bodyLength: initial.formats.length,
+            bodyPreview: initial.formats.keys.join(', '),
+            resultCount: initial.formats.length,
+            error: null,
+            timestamp: DateTime.now(),
+          ),
+        );
+      }
+      final book = initial ?? await _openLibrary.fetchBook(widget.bookId);
+      final text = await _openLibrary.fetchBookText(
+        book,
+        onDebug: _recordDebug,
+      );
       if (mounted) {
         setState(() {
           _text = text;
-          _book = book;
           _loading = false;
         });
         _buildPages();
       }
     } catch (e) {
+      _recordDebug(
+        OpenLibraryDebugSnapshot(
+          requestUrl: 'reader://book/${widget.bookId}/load',
+          statusCode: null,
+          success: false,
+          bodyLength: 0,
+          bodyPreview: '',
+          resultCount: null,
+          error: e.toString(),
+          timestamp: DateTime.now(),
+        ),
+      );
       if (mounted) {
         setState(() {
           _error = e.toString();
@@ -216,6 +256,45 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
+  void _recordDebug(OpenLibraryDebugSnapshot snapshot) {
+    if (!mounted) return;
+    setState(() => _debugSnapshots.add(snapshot));
+  }
+
+  Widget _buildDebugPanel() {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      constraints: const BoxConstraints(maxHeight: 300),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.only(bottom: 6),
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(12, 10, 12, 4),
+            child: Text(
+              'Reader debug responses',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          if (_debugSnapshots.isEmpty)
+            const ListTile(
+              dense: true,
+              title: Text('No debug events captured yet.'),
+            )
+          else
+            ..._debugSnapshots.map(
+              (snapshot) => _ReaderDebugSnapshotTile(snapshot: snapshot),
+            ),
+        ],
+      ),
+    );
+  }
+
   Map<String, Color> _themeColors(ReaderSettings s) {
     switch (s.theme) {
       case ThemeName.cream:
@@ -259,16 +338,55 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
     if (_error != null) {
       return Scaffold(
-        body: Center(
+        appBar: AppBar(
+          actions: [
+            if (kDebugMode)
+              IconButton(
+                tooltip:
+                    _showDebugPanel ? 'Hide API debug info' : 'Show API debug info',
+                onPressed: () {
+                  setState(() => _showDebugPanel = !_showDebugPanel);
+                },
+                icon: Icon(
+                  _showDebugPanel ? Icons.bug_report : Icons.bug_report_outlined,
+                ),
+              ),
+          ],
+        ),
+        body: SafeArea(
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.error_outline, size: 48),
-              const SizedBox(height: 12),
-              const Text('Failed to load book'),
-              TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Go Back')),
+              if (kDebugMode && _showDebugPanel) _buildDebugPanel(),
+              Expanded(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.error_outline, size: 48),
+                        const SizedBox(height: 12),
+                        const Text('Failed to load book'),
+                        const SizedBox(height: 6),
+                        Text(
+                          _error!,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color:
+                                Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Go Back'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -338,9 +456,116 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 ).then((_) => _buildPages());
               },
             ),
+            if (kDebugMode)
+              Positioned(
+                top: 4,
+                right: 8,
+                child: SafeArea(
+                  child: IgnorePointer(
+                    ignoring: !_showControls,
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 180),
+                      opacity: _showControls ? 1 : 0,
+                      child: IconButton(
+                        tooltip: _showDebugPanel
+                            ? 'Hide API debug info'
+                            : 'Show API debug info',
+                        onPressed: () {
+                          setState(() => _showDebugPanel = !_showDebugPanel);
+                        },
+                        icon: Icon(
+                          _showDebugPanel
+                              ? Icons.bug_report
+                              : Icons.bug_report_outlined,
+                          color: textColor,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            if (kDebugMode && _showDebugPanel)
+              Positioned(
+                top: 48,
+                left: 0,
+                right: 0,
+                child: SafeArea(child: _buildDebugPanel()),
+              ),
           ],
         ),
       ),
     );
   }
 }
+
+class _ReaderDebugSnapshotTile extends StatelessWidget {
+  final OpenLibraryDebugSnapshot snapshot;
+
+  const _ReaderDebugSnapshotTile({required this.snapshot});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final statusText = snapshot.statusCode == null
+        ? 'status: n/a'
+        : 'status: ${snapshot.statusCode}';
+    final resultText = snapshot.resultCount == null
+        ? 'results: n/a'
+        : 'results: ${snapshot.resultCount}';
+    final timeText =
+        '${snapshot.timestamp.hour.toString().padLeft(2, '0')}:${snapshot.timestamp.minute.toString().padLeft(2, '0')}:${snapshot.timestamp.second.toString().padLeft(2, '0')}';
+
+    return ExpansionTile(
+      tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+      childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      title: Text(snapshot.requestUrl, style: const TextStyle(fontSize: 12)),
+      subtitle: Text(
+        '${snapshot.success ? 'ok' : 'error'} | $statusText | $resultText | $timeText',
+        style: TextStyle(
+          fontSize: 12,
+          color: snapshot.success ? cs.primary : cs.error,
+        ),
+      ),
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: SelectableText(
+            'URL: ${snapshot.requestUrl}',
+            style: const TextStyle(fontSize: 12),
+          ),
+        ),
+        const SizedBox(height: 6),
+        if (snapshot.error != null)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Error: ${snapshot.error}',
+              style: TextStyle(fontSize: 12, color: cs.error),
+            ),
+          ),
+        const SizedBox(height: 6),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Body (${snapshot.bodyLength} bytes):',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: cs.surface,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: SelectableText(
+            snapshot.bodyPreview.isEmpty ? '(empty body)' : snapshot.bodyPreview,
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+          ),
+        ),
+      ],
+    );
+  }
+}
+

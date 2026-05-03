@@ -76,21 +76,21 @@ class Book {
       };
 }
 
-class GutendexResponse {
+class OpenLibraryResponse {
   final int count;
   final String? next;
   final String? previous;
   final List<Book> results;
 
-  const GutendexResponse({
+  const OpenLibraryResponse({
     required this.count,
     this.next,
     this.previous,
     required this.results,
   });
 
-  factory GutendexResponse.fromJson(Map<String, dynamic> json) =>
-      GutendexResponse(
+  factory OpenLibraryResponse.fromJson(Map<String, dynamic> json) =>
+      OpenLibraryResponse(
         count: json['count'] as int? ?? 0,
         next: json['next'] as String?,
         previous: json['previous'] as String?,

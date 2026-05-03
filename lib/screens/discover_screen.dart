@@ -1,8 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/book.dart';
-import '../services/gutendex_service.dart';
+import '../services/openlibrary_service.dart';
 import '../widgets/book_card.dart';
 import '../widgets/search_bar_widget.dart';
 import '../widgets/skeleton_widget.dart';
@@ -24,24 +25,55 @@ class DiscoverScreen extends StatefulWidget {
 
 class _DiscoverScreenState extends State<DiscoverScreen> {
   static const _previewCount = 10;
-  final _service = GutendexService();
+  static const _initialTopicBatch = 2;
+  static const _shelfHeight = 252.0;
+  final _service = OpenLibraryService();
   final Map<String, List<Book>> _shelves = {};
   final Map<String, bool> _loading = {};
+  final Set<String> _requestedTopics = <String>{};
+  final Map<String, String> _shelfErrors = {};
   String _query = '';
   List<Book> _searchResults = [];
   bool _searching = false;
   bool _searchLoading = false;
   String? _searchError;
   String? _catalogError;
+  final Map<String, OpenLibraryDebugSnapshot> _shelfDebug = {};
+  OpenLibraryDebugSnapshot? _searchDebug;
+  bool _showDebugPanel = false;
 
   @override
   void initState() {
     super.initState();
-    _loadAllShelves();
+    _loadInitialShelves();
+  }
+
+  Future<void> _loadInitialShelves() async {
+    setState(() => _catalogError = null);
+    final initialTopics = _topics.take(_initialTopicBatch).toList();
+    for (final t in initialTopics) {
+      _requestedTopics.add(t['topic']!);
+    }
+    final results = await Future.wait(
+      initialTopics.map((t) => _loadShelf(t['topic']!)),
+    );
+    if (!mounted) return;
+    if (results.every((ok) => !ok)) {
+      setState(() {
+        _catalogError = 'Could not load books. Check your internet and pull to retry.';
+      });
+    }
   }
 
   Future<void> _loadAllShelves() async {
-    setState(() => _catalogError = null);
+    setState(() {
+      _catalogError = null;
+      _shelfErrors.clear();
+      _requestedTopics.clear();
+    });
+    for (final t in _topics) {
+      _requestedTopics.add(t['topic']!);
+    }
     final results = await Future.wait(
       _topics.map((t) => _loadShelf(t['topic']!)),
     );
@@ -54,9 +86,18 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   }
 
   Future<bool> _loadShelf(String topic) async {
-    setState(() => _loading[topic] = true);
+    setState(() {
+      _loading[topic] = true;
+      _shelfErrors.remove(topic);
+    });
     try {
-      final resp = await _service.fetchBooks(topic: topic);
+      final resp = await _service.fetchBooks(
+        topic: topic,
+        onDebug: (snapshot) {
+          if (!mounted) return;
+          setState(() => _shelfDebug[topic] = snapshot);
+        },
+      );
       if (mounted) {
         setState(() {
           _shelves[topic] = resp.results.take(_previewCount).toList();
@@ -64,6 +105,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       }
       return true;
     } catch (_) {
+      if (mounted) {
+        setState(() {
+          _shelfErrors[topic] = 'Could not load this shelf.';
+        });
+      }
       return false;
     } finally {
       if (mounted) setState(() => _loading[topic] = false);
@@ -84,7 +130,13 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     });
     if (q.isEmpty) return;
     try {
-      final resp = await _service.fetchBooks(search: q);
+      final resp = await _service.fetchBooks(
+        search: q,
+        onDebug: (snapshot) {
+          if (!mounted || _query != q) return;
+          setState(() => _searchDebug = snapshot);
+        },
+      );
       if (mounted && _query == q) {
         setState(() {
           _searchResults = resp.results;
@@ -112,19 +164,40 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-              child: Text(
-                'Quietly',
-                style: GoogleFonts.lora(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: cs.onSurface,
-                ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Quietly',
+                      style: GoogleFonts.lora(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: cs.onSurface,
+                      ),
+                    ),
+                  ),
+                  if (kDebugMode)
+                    IconButton(
+                      tooltip: _showDebugPanel
+                          ? 'Hide API debug info'
+                          : 'Show API debug info',
+                      onPressed: () {
+                        setState(() => _showDebugPanel = !_showDebugPanel);
+                      },
+                      icon: Icon(
+                        _showDebugPanel
+                            ? Icons.bug_report
+                            : Icons.bug_report_outlined,
+                      ),
+                    ),
+                ],
               ),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: SearchBarWidget(onChanged: _onSearch),
             ),
+            if (kDebugMode && _showDebugPanel) _buildDebugPanel(),
             const SizedBox(height: 8),
             Expanded(
               child: _searching
@@ -173,14 +246,22 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     }
 
     return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 16),
       physics: const AlwaysScrollableScrollPhysics(),
       itemCount: _topics.length,
       itemBuilder: (context, i) {
         final t = _topics[i];
         final topic = t['topic']!;
         final label = t['label']!;
+        if (!_requestedTopics.contains(topic)) {
+          _requestedTopics.add(topic);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _loadShelf(topic);
+          });
+        }
         final books = _shelves[topic] ?? [];
         final loading = _loading[topic] ?? false;
+        final shelfError = _shelfErrors[topic];
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -205,9 +286,28 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
               ),
             ),
             SizedBox(
-              height: 220,
+              height: _shelfHeight,
               child: loading
                   ? _shelfSkeleton()
+                  : shelfError != null
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                shelfError,
+                                style: TextStyle(
+                                  color: Theme.of(context).colorScheme.error,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              TextButton(
+                                onPressed: () => _loadShelf(topic),
+                                child: const Text('Retry shelf'),
+                              ),
+                            ],
+                          ),
+                        )
                   : books.isEmpty
                       ? const Center(
                           child: Text('No books for this shelf yet'),
@@ -279,10 +379,34 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       );
     }
     if (_searchResults.isEmpty) {
-      return const Center(child: Text('No books found'));
+      final cs = Theme.of(context).colorScheme;
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.search_off, size: 36, color: cs.outline),
+              const SizedBox(height: 10),
+              Text(
+                'No books found for "$_query"',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: cs.onSurface),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Try a different title, author, or keyword.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: cs.onSurface.withValues(alpha: 0.7)),
+              ),
+            ],
+          ),
+        ),
+      );
     }
     return GridView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         mainAxisSpacing: 16,
@@ -291,6 +415,126 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       ),
       itemCount: _searchResults.length,
       itemBuilder: (ctx, i) => BookCard(book: _searchResults[i]),
+    );
+  }
+
+  Widget _buildDebugPanel() {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+            child: Text(
+              'Open Library debug responses',
+              style: TextStyle(
+                color: cs.onSurface,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          if (_searchDebug != null)
+            _DebugSnapshotTile(
+              title: 'Search: ${_query.isEmpty ? '(none)' : _query}',
+              snapshot: _searchDebug!,
+            ),
+          ..._topics.map((topicData) {
+            final topic = topicData['topic']!;
+            final label = topicData['label']!;
+            final snapshot = _shelfDebug[topic];
+            if (snapshot == null) {
+              return ListTile(
+                dense: true,
+                title: Text('$label ($topic)'),
+                subtitle: const Text('No response captured yet.'),
+              );
+            }
+            return _DebugSnapshotTile(
+              title: '$label ($topic)',
+              snapshot: snapshot,
+            );
+          }),
+          const SizedBox(height: 6),
+        ],
+      ),
+    );
+  }
+}
+
+class _DebugSnapshotTile extends StatelessWidget {
+  final String title;
+  final OpenLibraryDebugSnapshot snapshot;
+
+  const _DebugSnapshotTile({required this.title, required this.snapshot});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final statusText = snapshot.statusCode == null
+        ? 'status: n/a'
+        : 'status: ${snapshot.statusCode}';
+    final resultText = snapshot.resultCount == null
+        ? 'results: n/a'
+        : 'results: ${snapshot.resultCount}';
+    final timeText =
+        '${snapshot.timestamp.hour.toString().padLeft(2, '0')}:${snapshot.timestamp.minute.toString().padLeft(2, '0')}:${snapshot.timestamp.second.toString().padLeft(2, '0')}';
+
+    return ExpansionTile(
+      tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+      childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      title: Text(title, style: const TextStyle(fontSize: 13)),
+      subtitle: Text(
+        '${snapshot.success ? 'ok' : 'error'} | $statusText | $resultText | $timeText',
+        style: TextStyle(
+          fontSize: 12,
+          color: snapshot.success ? cs.primary : cs.error,
+        ),
+      ),
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: SelectableText(
+            'URL: ${snapshot.requestUrl}',
+            style: const TextStyle(fontSize: 12),
+          ),
+        ),
+        const SizedBox(height: 6),
+        if (snapshot.error != null)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Error: ${snapshot.error}',
+              style: TextStyle(fontSize: 12, color: cs.error),
+            ),
+          ),
+        const SizedBox(height: 6),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Body (${snapshot.bodyLength} bytes):',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: cs.surface,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: SelectableText(
+            snapshot.bodyPreview.isEmpty ? '(empty body)' : snapshot.bodyPreview,
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+          ),
+        ),
+      ],
     );
   }
 }

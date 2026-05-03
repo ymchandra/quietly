@@ -20,7 +20,7 @@ class BookListRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return InkWell(
-      onTap: () => context.push('/book/${book.id}'),
+      onTap: () => context.push('/book/${book.id}', extra: book),
       onLongPress: onLongPress,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),

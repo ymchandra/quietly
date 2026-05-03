@@ -10,6 +10,7 @@ import 'screens/book_detail_screen.dart';
 import 'screens/reader_screen.dart';
 import 'screens/main_screen.dart';
 import 'screens/topic_books_screen.dart';
+import 'models/book.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
 final _shellNavigatorKey = GlobalKey<NavigatorState>();
@@ -42,14 +43,24 @@ final _router = GoRouter(
     GoRoute(
       parentNavigatorKey: _rootNavigatorKey,
       path: '/book/:id',
-      builder: (_, state) =>
-          BookDetailScreen(bookId: int.parse(state.pathParameters['id']!)),
+      builder: (_, state) {
+        final extra = state.extra;
+        return BookDetailScreen(
+          bookId: int.parse(state.pathParameters['id']!),
+          initialBook: extra is Book ? extra : null,
+        );
+      },
     ),
     GoRoute(
       parentNavigatorKey: _rootNavigatorKey,
       path: '/reader/:id',
-      builder: (_, state) =>
-          ReaderScreen(bookId: int.parse(state.pathParameters['id']!)),
+      builder: (_, state) {
+        final extra = state.extra;
+        return ReaderScreen(
+          bookId: int.parse(state.pathParameters['id']!),
+          initialBook: extra is Book ? extra : null,
+        );
+      },
     ),
     GoRoute(
       parentNavigatorKey: _rootNavigatorKey,

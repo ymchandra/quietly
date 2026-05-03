@@ -5,28 +5,40 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../models/book.dart';
 import '../providers/library_provider.dart';
-import '../services/gutendex_service.dart';
+import '../services/openlibrary_service.dart';
 import '../services/storage_service.dart';
 import '../widgets/skeleton_widget.dart';
 
 class BookDetailScreen extends StatefulWidget {
   final int bookId;
-  const BookDetailScreen({super.key, required this.bookId});
+  final Book? initialBook;
+  const BookDetailScreen({
+    super.key,
+    required this.bookId,
+    this.initialBook,
+  });
   @override
   State<BookDetailScreen> createState() => _BookDetailScreenState();
 }
 
 class _BookDetailScreenState extends State<BookDetailScreen> {
-  final _service = GutendexService();
+  final _service = OpenLibraryService();
   final _storage = StorageService();
   Book? _book;
   bool _loading = true;
   bool _downloading = false;
+  bool _checkingReadability = false;
+  bool _canRead = true;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    _book = widget.initialBook;
+    _loading = _book == null;
+    if (_book != null) {
+      _checkReadability(_book!);
+    }
     _load();
   }
 
@@ -37,12 +49,16 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         setState(() {
           _book = book;
           _loading = false;
+          _error = null;
         });
+        _checkReadability(book);
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = e.toString();
+          if (_book == null) {
+            _error = e.toString();
+          }
           _loading = false;
         });
       }
@@ -50,7 +66,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   }
 
   Future<void> _download(LibraryProvider lib) async {
-    if (_book == null) return;
+    if (_book == null || !_canRead) return;
     setState(() => _downloading = true);
     try {
       final text = await _service.fetchBookText(_book!);
@@ -64,6 +80,17 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     } finally {
       if (mounted) setState(() => _downloading = false);
     }
+  }
+
+  Future<void> _checkReadability(Book book) async {
+    if (!mounted) return;
+    setState(() => _checkingReadability = true);
+    final canRead = await _service.hasReadableText(book);
+    if (!mounted) return;
+    setState(() {
+      _canRead = canRead;
+      _checkingReadability = false;
+    });
   }
 
   @override
@@ -81,6 +108,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     final inWishlist = lib.isInWishlist(book.id);
     final inReadLater = lib.isInReadLater(book.id);
     final downloaded = lib.isDownloaded(book.id);
+    final readDisabled = _checkingReadability || !_canRead;
 
     return Scaffold(
       appBar: AppBar(
@@ -146,42 +174,75 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: () => context.push('/reader/${book.id}'),
+                onPressed: readDisabled
+                    ? null
+                    : () => context.push('/reader/${book.id}', extra: book),
                 style: FilledButton.styleFrom(backgroundColor: cs.primary),
-                child: const Text('Read',
-                    style: TextStyle(fontSize: 16)),
+                child: Text(
+                  _checkingReadability
+                      ? 'Checking availability...'
+                      : _canRead
+                          ? 'Read'
+                          : 'Text not available',
+                  style: const TextStyle(fontSize: 16),
+                ),
               ),
             ),
             const SizedBox(height: 10),
             SizedBox(
               width: double.infinity,
               child: OutlinedButton(
-                onPressed:
-                    downloaded || _downloading ? null : () => _download(lib),
+                onPressed: downloaded || _downloading || readDisabled
+                    ? null
+                    : () => _download(lib),
                 child: _downloading
                     ? const SizedBox(
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(strokeWidth: 2))
-                    : Text(downloaded ? 'Saved Offline' : 'Save Offline'),
+                    : Text(
+                        downloaded
+                            ? 'Saved Offline'
+                            : _canRead
+                                ? 'Save Offline'
+                                : 'No text source',
+                      ),
               ),
             ),
+            if (!_checkingReadability && !_canRead) ...[
+              const SizedBox(height: 8),
+              Text(
+                'This title appears to be image-only in Open Library. Reader supports text sources only.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: cs.onSurface.withValues(alpha: 0.7),
+                ),
+              ),
+            ],
             const SizedBox(height: 24),
-            if (book.subjects.isNotEmpty) ...[
-              Text('Subjects',
-                  style: GoogleFonts.lora(
-                      fontSize: 16, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
+            Text('Subjects',
+                style:
+                    GoogleFonts.lora(fontSize: 16, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            if (book.subjects.isEmpty)
+              Text(
+                'No subject information available for this title.',
+                style: TextStyle(color: cs.onSurface.withValues(alpha: 0.7)),
+              )
+            else
               _ChipWrap(items: book.subjects),
-              const SizedBox(height: 16),
-            ],
-            if (book.bookshelves.isNotEmpty) ...[
-              Text('Bookshelves',
-                  style: GoogleFonts.lora(
-                      fontSize: 16, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
+            const SizedBox(height: 16),
+            Text('Bookshelves',
+                style:
+                    GoogleFonts.lora(fontSize: 16, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            if (book.bookshelves.isEmpty)
+              Text(
+                'No bookshelf tags available for this title.',
+                style: TextStyle(color: cs.onSurface.withValues(alpha: 0.7)),
+              )
+            else
               _ChipWrap(items: book.bookshelves),
-            ],
           ],
         ),
       ),

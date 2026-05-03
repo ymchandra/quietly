@@ -2,7 +2,7 @@
 
 **Quietread** — a calm, eye-friendly mobile reading app for free public-domain books. Built with Flutter.
 
-Books are sourced from the [Project Gutenberg](https://gutenberg.org/) catalog via the [Gutendex API](https://gutendex.com/). Offline reading and all user state (wishlist, read-later, library, progress, and reader settings) are stored locally on the device — no account or server required.
+Books and metadata are sourced from [Open Library](https://openlibrary.org/developers/api). Offline reading and all user state (wishlist, read-later, library, progress, and reader settings) are stored locally on the device — no account or server required.
 
 ## Features
 
@@ -65,10 +65,10 @@ lib/
 ├── constants/
 │   └── app_colors.dart          # Colour tokens for UI + 5 reader theme palettes
 ├── models/
-│   ├── book.dart                # Book, Person, GutendexResponse (JSON serialisation)
+│   ├── book.dart                # Book, Person, OpenLibraryResponse (JSON serialisation)
 │   └── reader_settings.dart     # ReaderSettings, StoredReaderSettings, enums
 ├── services/
-│   ├── gutendex_service.dart    # Gutendex API client; multi-source text fetch + HTML stripping
+│   ├── openlibrary_service.dart # Open Library API client; multi-source text fetch + HTML stripping
 │   └── storage_service.dart     # SharedPreferences CRUD; offline book file I/O via path_provider
 ├── providers/
 │   ├── library_provider.dart    # Wishlist / Read Later / Downloaded / Progress (ChangeNotifier)
@@ -98,7 +98,7 @@ lib/
 |---|---|
 | [`go_router`](https://pub.dev/packages/go_router) | Declarative navigation with `StatefulShellRoute` for tabs |
 | [`provider`](https://pub.dev/packages/provider) | State management (`ChangeNotifier`) |
-| [`http`](https://pub.dev/packages/http) | Gutendex API requests |
+| [`http`](https://pub.dev/packages/http) | Open Library API requests |
 | [`shared_preferences`](https://pub.dev/packages/shared_preferences) | Persistent key-value storage |
 | [`path_provider`](https://pub.dev/packages/path_provider) | Device documents directory for offline book files |
 | [`cached_network_image`](https://pub.dev/packages/cached_network_image) | Book cover caching |

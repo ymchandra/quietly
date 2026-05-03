@@ -4,26 +4,31 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
-def localProperties = new Properties()
+def localProperties = [:]
 def localPropertiesFile = rootProject.file('local.properties')
 if (localPropertiesFile.exists()) {
-    localPropertiesFile.withReader('UTF-8') { reader ->
-        localProperties.load(reader)
+    localPropertiesFile.eachLine('UTF-8') { line ->
+        def trimmed = line?.trim()
+        if (!trimmed || trimmed.startsWith('#') || !trimmed.contains('=')) return
+        def separator = trimmed.indexOf('=')
+        def key = trimmed.substring(0, separator).trim()
+        def value = trimmed.substring(separator + 1).trim()
+        localProperties[key] = value
     }
 }
 
-def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+def flutterVersionCode = localProperties['flutter.versionCode']
 if (flutterVersionCode == null) {
     flutterVersionCode = '1'
 }
 
-def flutterVersionName = localProperties.getProperty('flutter.versionName')
+def flutterVersionName = localProperties['flutter.versionName']
 if (flutterVersionName == null) {
     flutterVersionName = '1.0'
 }
 
 android {
-    namespace "com.example.quietly"
+    namespace "com.ymchandra.mobile.app.quietly"
     compileSdk 36
     ndkVersion "28.2.13676358"
 
@@ -41,7 +46,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.example.quietly"
+        applicationId "com.ymchandra.mobile.app.quietly"
         minSdkVersion flutter.minSdkVersion
         targetSdk 36
         versionCode flutterVersionCode.toInteger()
