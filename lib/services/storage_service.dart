@@ -36,7 +36,7 @@ class StorageService {
     final prefs = await _prefs;
     final raw = prefs.getString(_wishlistKey);
     if (raw == null) return [];
-    final list = json.decode(raw) as List;
+    final list = json.decode(raw) as List<dynamic>;
     return list.map((e) => Book.fromJson(e as Map<String, dynamic>)).toList();
   }
 
@@ -50,7 +50,7 @@ class StorageService {
     final prefs = await _prefs;
     final raw = prefs.getString(_readLaterKey);
     if (raw == null) return [];
-    final list = json.decode(raw) as List;
+    final list = json.decode(raw) as List<dynamic>;
     return list.map((e) => Book.fromJson(e as Map<String, dynamic>)).toList();
   }
 
@@ -64,7 +64,7 @@ class StorageService {
     final prefs = await _prefs;
     final raw = prefs.getString(_downloadedKey);
     if (raw == null) return [];
-    final list = json.decode(raw) as List;
+    final list = json.decode(raw) as List<dynamic>;
     return list.map((e) => Book.fromJson(e as Map<String, dynamic>)).toList();
   }
 

@@ -110,7 +110,8 @@ class StoredReaderSettings {
           ? ReaderSettings.fromJson(globalJson)
           : const ReaderSettings(),
       perBook: perBookJson.map(
-        (k, v) => MapEntry(int.parse(k), Map<String, dynamic>.from(v as Map)),
+        (k, v) => MapEntry(
+            int.parse(k), Map<String, dynamic>.from(v as Map<dynamic, dynamic>)),
       ),
     );
   }
