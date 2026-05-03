@@ -77,15 +77,17 @@ jobs:
             echo "sdk.dir=$ANDROID_HOME" >> android/local.properties
           fi
       - name: Ensure Gradle wrapper is executable
-        run: chmod +x android/gradlew
+        working-directory: android
+        run: chmod +x gradlew
       - name: Install dependencies
         run: flutter pub get
       - name: Build APK (Gradle)
+        working-directory: android
         run: |
           if [ "${{ github.event.inputs.debug }}" == "true" ]; then
-            ./android/gradlew app:assembleDebug
+            ./gradlew app:assembleDebug
           else
-            ./android/gradlew app:assembleRelease
+            ./gradlew app:assembleRelease
           fi
       - name: Upload APK
         uses: actions/upload-artifact@v4
