@@ -159,7 +159,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
               0;
       final startPage = (savedPercent * imageUrls.length)
           .floor()
-          .clamp(0, math.max(0, imageUrls.length - 1));
+          .clamp(0, imageUrls.length - 1);
       setState(() {
         _pages = imageUrls;
         _currentPage = startPage;

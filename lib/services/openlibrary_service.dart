@@ -331,9 +331,9 @@ class OpenLibraryService {
     String iaId, {
     void Function(OpenLibraryDebugSnapshot)? onDebug,
   }) async {
-    // Archive.org's IIIF identifier format appends a literal '$' after the item id.
-    final manifestUrl = 'https://iiif.archive.org/iiif/$iaId'
-        r'$/manifest.json';
+    // The '\$' is a literal '$' that is part of archive.org's IIIF URL format:
+    // https://iiif.archive.org/iiif/{item_id}$/manifest.json
+    final manifestUrl = 'https://iiif.archive.org/iiif/$iaId\$/manifest.json';
     try {
       final resp =
           await _getWithRetry(Uri.parse(manifestUrl), timeout: _timeout);
@@ -444,8 +444,18 @@ class OpenLibraryService {
     try {
       final text = await fetchBookText(book, onDebug: onDebug);
       return BookContent.text(text);
-    } catch (_) {
-      // Text not available; proceed to image fallback.
+    } catch (e) {
+      // Text not available; record and proceed to image fallback.
+      onDebug?.call(OpenLibraryDebugSnapshot(
+        requestUrl: 'openlibrary://book/${book.id}/text-fetch-failed',
+        statusCode: null,
+        success: false,
+        bodyLength: 0,
+        bodyPreview: '',
+        resultCount: 0,
+        error: 'Text unavailable, trying image pages: $e',
+        timestamp: DateTime.now(),
+      ));
     }
 
     // Try scanned image pages from archive.org via IIIF.
