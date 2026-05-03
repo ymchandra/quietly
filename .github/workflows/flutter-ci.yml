@@ -79,23 +79,34 @@ jobs:
       - name: Ensure Gradle wrapper is executable
         working-directory: android
         run: chmod +x gradlew
+      - name: Create debug keystore if absent
+        run: |
+          mkdir -p "$HOME/.android"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkey -v \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
       - name: Install dependencies
         run: flutter pub get
-      - name: Build APK (Gradle)
-        working-directory: android
+      - name: Build APK
         run: |
           if [ "${{ github.event.inputs.debug }}" == "true" ]; then
-            ./gradlew app:assembleDebug
+            flutter build apk --debug
           else
-            ./gradlew app:assembleRelease
+            flutter build apk --release
           fi
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: android-apk
-          path: |
-            android/app/build/outputs/flutter-apk/*.apk
-            android/app/build/outputs/apk/**/*.apk
+          path: build/app/outputs/flutter-apk/*.apk
           retention-days: 30
 
   build-ios:

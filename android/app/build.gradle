@@ -59,9 +59,26 @@ android {
         }
     }
 
+    signingConfigs {
+        debug {
+            storeFile file("${System.properties['user.home']}/.android/debug.keystore")
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+        release {
+            // Use the debug keystore so CI-built APKs can be sideloaded on real devices.
+            // Replace with a proper release keystore before publishing to the Play Store.
+            storeFile file("${System.properties['user.home']}/.android/debug.keystore")
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+
     buildTypes {
         release {
-            // Keep release unsigned in CI unless a dedicated release keystore is configured.
+            signingConfig signingConfigs.release
         }
     }
 }
