@@ -1,226 +1,118 @@
 # Quietly
 
-**Quietread** — a calm, eye-friendly mobile reading app for free public-domain books.
+**Quietread** — a calm, eye-friendly mobile reading app for free public-domain books. Built with Flutter.
 
-Books are sourced from the [Project Gutenberg](https://gutenberg.org/) catalog via the [Gutendex API](https://gutendex.com/). Offline reading is powered by `expo-file-system`; user state (wishlist, read-later, library, progress, and reader settings) is stored locally via `AsyncStorage`.
+Books are sourced from the [Project Gutenberg](https://gutenberg.org/) catalog via the [Gutendex API](https://gutendex.com/). Offline reading and all user state (wishlist, read-later, library, progress, and reader settings) are stored locally on the device — no account or server required.
 
-## Repository layout
+## Features
 
-```
-quietly/
-├── artifacts/
-│   ├── api-server/        # Express 5 REST API
-│   ├── mobile/            # Expo (React Native) mobile app
-│   └── mockup-sandbox/    # Vite + React UI mockup playground
-├── lib/
-│   ├── api-client-react/  # Generated React Query hooks (do not edit by hand)
-│   ├── api-spec/          # OpenAPI spec + Orval codegen config
-│   ├── api-zod/           # Generated Zod request/response schemas
-│   └── db/                # PostgreSQL schema (Drizzle ORM)
-├── scripts/               # Workspace utility scripts
-├── package.json           # Root workspace scripts
-└── pnpm-workspace.yaml    # pnpm workspace + catalog config
-```
+- **Discover** — Browse curated topic shelves (Classics, Romance, Mystery, Philosophy, Poetry, Adventure) or search by title/author
+- **Library** — Track in-progress reads, downloaded books, and finished titles with progress bars
+- **Lists** — Wishlist and Read Later collections
+- **Settings** — Global reader configuration: theme, font family, font size, line height
+- **Book Detail** — Cover art, subjects/bookshelves, offline download, wishlist and read-later toggles
+- **Reader** — Full-screen horizontal page-swipe reader with tap-to-show controls, progress tracking, and per-book appearance settings
+- **Reader Settings** — Per-book overrides: 5 themes (Cream, Paper, Sepia, Slate, Midnight), Lora/Inter fonts, font size 14–26, compact/comfortable/airy line height
 
 ## Prerequisites
 
 | Tool | Minimum version |
 |------|----------------|
-| Node.js | 24 |
-| pnpm | 9 |
-| PostgreSQL | 15 (for the API server) |
+| Flutter SDK | 3.27 |
+| Dart | 3.4.0 |
+| Android Studio | Latest (for Android) |
+| Xcode | 15 (for iOS, macOS only) |
 
-> **pnpm only** — the root `package.json` blocks `npm` and `yarn` via the `preinstall` script.
+Install Flutter: https://flutter.dev/docs/get-started/install
 
-Install pnpm if you don't have it:
-
-```bash
-npm install -g pnpm
-```
-
-## Setup
-
-### 1. Install dependencies
+## Getting started
 
 ```bash
-pnpm install
+# Install dependencies
+flutter pub get
+
+# Run on a connected device or emulator
+flutter run
+
+# Run on a specific platform
+flutter run -d android
+flutter run -d ios
+flutter run -d chrome   # web
 ```
-
-### 2. Configure environment variables
-
-**API server** (`artifacts/api-server`):
-
-| Variable | Description |
-|----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string, e.g. `postgresql://user:pass@localhost:5432/quietly` |
-| `PORT` | Port the HTTP server listens on, e.g. `3000` |
-
-You can place these in a `.env` file at the repo root or export them in your shell before running the server.
-
-### 3. Push the database schema
-
-Run this once (and again whenever you change `lib/db/src/schema`):
-
-```bash
-pnpm --filter @workspace/db run push
-```
-
-Use `push-force` to apply schema changes that Drizzle considers destructive:
-
-```bash
-pnpm --filter @workspace/db run push-force
-```
-
-## Running the apps
-
-### API server
-
-```bash
-pnpm --filter @workspace/api-server run dev
-```
-
-This typechecks, builds (esbuild → `dist/index.mjs`), and starts the server. Logs are emitted via [Pino](https://getpino.io/) and pretty-printed in development.
-
-### Mobile app (Expo)
-
-```bash
-pnpm --filter @workspace/mobile run dev
-```
-
-Starts the Expo dev server. Scan the QR code with [Expo Go](https://expo.dev/go) on your device, or press `w` to open the web preview.
-
-### Mockup sandbox
-
-```bash
-pnpm --filter @workspace/mockup-sandbox run dev
-```
-
-Opens a Vite dev server with the UI mockup playground, useful for prototyping screens without the mobile runtime.
 
 ## Building
 
-Build every package in the workspace (runs a full typecheck first):
-
 ```bash
-pnpm run build
+# Android APK (release)
+flutter build apk --release
+
+# Android App Bundle (for Play Store)
+flutter build appbundle --release
+
+# iOS IPA (no code signing — for CI/testing)
+flutter build ipa --no-codesign
+
+# Web
+flutter build web --release
 ```
 
-Build individual packages:
+## Architecture
 
-```bash
-# API server only
-pnpm --filter @workspace/api-server run build
-
-# Mobile (creates an Expo web bundle)
-pnpm --filter @workspace/mobile run build
-
-# Mockup sandbox
-pnpm --filter @workspace/mockup-sandbox run build
+```
+lib/
+├── main.dart                    # Bootstrap: initialises providers, runs app
+├── app.dart                     # MaterialApp.router, go_router config, light/dark themes
+├── constants/
+│   └── app_colors.dart          # Colour tokens for UI + 5 reader theme palettes
+├── models/
+│   ├── book.dart                # Book, Person, GutendexResponse (JSON serialisation)
+│   └── reader_settings.dart     # ReaderSettings, StoredReaderSettings, enums
+├── services/
+│   ├── gutendex_service.dart    # Gutendex API client; multi-source text fetch + HTML stripping
+│   └── storage_service.dart     # SharedPreferences CRUD; offline book file I/O via path_provider
+├── providers/
+│   ├── library_provider.dart    # Wishlist / Read Later / Downloaded / Progress (ChangeNotifier)
+│   └── reader_settings_provider.dart  # Global + per-book appearance settings (ChangeNotifier)
+├── screens/
+│   ├── main_screen.dart         # Bottom navigation shell (StatefulShellRoute)
+│   ├── discover_screen.dart     # Topic shelves + debounced search
+│   ├── library_screen.dart      # Reading / Downloaded / Finished segments
+│   ├── lists_screen.dart        # Wishlist / Read Later segments
+│   ├── settings_screen.dart     # Global reader settings UI
+│   ├── book_detail_screen.dart  # Book metadata, download, read action
+│   └── reader_screen.dart       # Full-screen page-swipe reader
+└── widgets/
+    ├── book_card.dart            # Vertical cover card (120 × 180)
+    ├── book_list_row.dart        # Horizontal row with optional progress bar
+    ├── search_bar_widget.dart    # Rounded search input with 350 ms debounce
+    ├── empty_state_widget.dart   # Centred icon + message placeholder
+    ├── skeleton_widget.dart      # Pulsing loading placeholder
+    ├── segmented_control_widget.dart  # Pill-style segment selector
+    ├── reader_controls.dart      # Animated top/bottom overlay in reader
+    └── reader_settings_sheet.dart  # Appearance bottom sheet content
 ```
 
-## Typechecking
+## Key packages
 
-```bash
-# Typecheck everything (lib packages + all artifacts)
-pnpm run typecheck
+| Package | Purpose |
+|---|---|
+| [`go_router`](https://pub.dev/packages/go_router) | Declarative navigation with `StatefulShellRoute` for tabs |
+| [`provider`](https://pub.dev/packages/provider) | State management (`ChangeNotifier`) |
+| [`http`](https://pub.dev/packages/http) | Gutendex API requests |
+| [`shared_preferences`](https://pub.dev/packages/shared_preferences) | Persistent key-value storage |
+| [`path_provider`](https://pub.dev/packages/path_provider) | Device documents directory for offline book files |
+| [`cached_network_image`](https://pub.dev/packages/cached_network_image) | Book cover caching |
+| [`google_fonts`](https://pub.dev/packages/google_fonts) | Lora + Inter fonts |
 
-# Typecheck lib packages only (TypeScript project references)
-pnpm run typecheck:libs
+## CI / GitHub Actions
 
-# Typecheck a single package
-pnpm --filter @workspace/api-server run typecheck
-pnpm --filter @workspace/mobile run typecheck
-pnpm --filter @workspace/mockup-sandbox run typecheck
-```
+| Trigger | Job | Artifact |
+|---|---|---|
+| Push or PR → `main` | `analyze` — `flutter analyze` + `flutter test` | — |
+| Push or PR → `main` | `build-android` — `flutter build apk --release` | `release-apk` |
+| `workflow_dispatch` → ios | `build-ios` — `flutter build ipa --no-codesign` | `ios-ipa` |
 
-## Code generation
+## License
 
-The `lib/api-client-react` and `lib/api-zod` packages are generated from the OpenAPI spec in `lib/api-spec/openapi.yaml` using [Orval](https://orval.dev/). After editing the spec, regenerate:
-
-```bash
-pnpm --filter @workspace/api-spec run codegen
-```
-
-This runs Orval and then immediately typechecks the lib packages to catch any breakage.
-
-> **Do not edit** `lib/api-client-react/src` or `lib/api-zod/src` by hand — your changes will be overwritten the next time `codegen` runs.
-
-## Debugging
-
-### API server
-
-The server uses [Pino](https://getpino.io/) for structured JSON logging. In development the output is piped through `pino-pretty` for readability. To see raw JSON (e.g. to pipe to a log aggregator), run the built bundle directly:
-
-```bash
-node --enable-source-maps artifacts/api-server/dist/index.mjs
-```
-
-Source maps are enabled (`--enable-source-maps`), so stack traces point back to the original TypeScript files.
-
-To attach a Node.js debugger (e.g. VS Code or Chrome DevTools):
-
-```bash
-node --inspect --enable-source-maps artifacts/api-server/dist/index.mjs
-```
-
-Then open `chrome://inspect` or connect your IDE's debugger to `localhost:9229`.
-
-### Mobile app
-
-Use the [Expo dev tools](https://docs.expo.dev/debugging/tools/) built into the Expo CLI. Press `j` in the terminal running `pnpm --filter @workspace/mobile run dev` to open the JS debugger in your browser.
-
-For React Native-specific issues, the [Flipper](https://fbflipper.com/) desktop app can be connected to the Expo Go client on a physical device.
-
-## Development workflow
-
-### Adding a new API endpoint
-
-1. Describe the endpoint in `lib/api-spec/openapi.yaml`.
-2. Run `pnpm --filter @workspace/api-spec run codegen` to regenerate types and hooks.
-3. Implement the route handler in `artifacts/api-server/src/routes/`.
-4. Use the generated Zod schemas from `@workspace/api-zod` for request validation.
-5. Use the generated React Query hooks from `@workspace/api-client-react` in the mobile app.
-
-### Updating the database schema
-
-1. Edit `lib/db/src/schema/index.ts`.
-2. Run `pnpm --filter @workspace/db run push` to apply changes to your local database.
-3. If Drizzle reports a destructive change, use `push-force` (dev only).
-
-### Adding a new workspace package
-
-1. Create a directory under `artifacts/` (for runnable apps) or `lib/` (for shared libraries).
-2. Add a `package.json` with a unique `"name"` scoped to `@workspace/`.
-3. Reference shared dependency versions from the catalog in `pnpm-workspace.yaml` using `catalog:` instead of a version string.
-4. Run `pnpm install` from the repo root to link the new package.
-
-## Project structure details
-
-### `lib/db`
-
-Drizzle ORM schema and migration helpers. Exports:
-
-- `@workspace/db` — database client and query helpers
-- `@workspace/db/schema` — raw Drizzle table definitions (used by `drizzle-zod` to derive Zod schemas)
-
-### `lib/api-spec`
-
-Single source of truth for the REST API contract (`openapi.yaml`). Contains the Orval config (`orval.config.ts`) that drives code generation for both `lib/api-zod` and `lib/api-client-react`.
-
-### `artifacts/api-server`
-
-Express 5 HTTP server. Built with esbuild into a single ESM bundle (`dist/index.mjs`). Key entry points:
-
-- `src/index.ts` — reads `PORT` env var and starts the server
-- `src/app.ts` — Express app with CORS, JSON body parsing, and Pino HTTP logging
-- `src/routes/` — route handlers
-
-### `artifacts/mobile`
-
-Expo Router app targeting iOS, Android, and web. Key directories:
-
-- `app/(tabs)/` — tab-based navigation screens (Home, Library, Lists, Settings)
-- `app/book/` — book detail screen
-- `app/reader/` — in-app reader screen
-- `contexts/` — React context providers for app-wide state
-- `hooks/` — custom React hooks
+App code: MIT.  
+Book content sourced from [Project Gutenberg](https://gutenberg.org) (public domain).
