@@ -29,6 +29,8 @@ class StorageService {
   static const _downloadedKey = '${_prefix}downloaded';
   static const _progressKey = '${_prefix}progress';
   static const _readerSettingsKey = '${_prefix}readerSettings';
+  static const _onboardingDoneKey = '${_prefix}onboardingDone';
+  static const _userAgeKey = '${_prefix}userAge';
 
   Future<SharedPreferences> get _prefs => SharedPreferences.getInstance();
 
@@ -128,5 +130,25 @@ class StorageService {
   Future<bool> hasOfflineText(int bookId) async {
     final file = await _offlineFile(bookId);
     return file.existsSync();
+  }
+
+  Future<bool> getOnboardingDone() async {
+    final prefs = await _prefs;
+    return prefs.getBool(_onboardingDoneKey) ?? false;
+  }
+
+  Future<void> saveOnboardingDone(bool done) async {
+    final prefs = await _prefs;
+    await prefs.setBool(_onboardingDoneKey, done);
+  }
+
+  Future<int?> getUserAge() async {
+    final prefs = await _prefs;
+    return prefs.getInt(_userAgeKey);
+  }
+
+  Future<void> saveUserAge(int age) async {
+    final prefs = await _prefs;
+    await prefs.setInt(_userAgeKey, age);
   }
 }

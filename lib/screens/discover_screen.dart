@@ -2,13 +2,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
 import '../models/book.dart';
+import '../providers/user_profile_provider.dart';
 import '../services/openlibrary_service.dart';
 import '../widgets/book_card.dart';
 import '../widgets/search_bar_widget.dart';
 import '../widgets/skeleton_widget.dart';
 
-const _topics = [
+const _allTopics = [
   {'label': 'Most Loved Classics', 'topic': 'fiction'},
   {'label': 'Romance', 'topic': 'love'},
   {'label': 'Mystery', 'topic': 'mystery'},
@@ -42,10 +44,21 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   OpenLibraryDebugSnapshot? _searchDebug;
   bool _showDebugPanel = false;
 
+  List<Map<String, String>> _topics = [];
+  bool _initialized = false;
+
   @override
-  void initState() {
-    super.initState();
-    _loadInitialShelves();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final allowed =
+        context.read<UserProfileProvider>().allowedTopics.toSet();
+    _topics = _allTopics
+        .where((t) => allowed.contains(t['topic']))
+        .toList();
+    if (!_initialized) {
+      _initialized = true;
+      _loadInitialShelves();
+    }
   }
 
   Future<void> _loadInitialShelves() async {
