@@ -40,6 +40,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   bool get _isImageBased => _content?.isImageBased ?? false;
 
+  List<String> _allPages = [];
   List<String> _pages = [];
   late PageController _pageController;
   int _currentPage = 0;
@@ -48,6 +49,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Size? _lastSize;
 
   static const double _charWidthRatio = 0.52;
+  static const int _pageChunkSize = 10;
   static const double _pageFillFactor = 0.85;
   static const int _minCharsPerPage = 300;
 
@@ -160,8 +162,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
       final startPage = (savedPercent * imageUrls.length)
           .floor()
           .clamp(0, imageUrls.length - 1);
+      final initialCount =
+          (startPage + _pageChunkSize).clamp(_pageChunkSize, imageUrls.length);
       setState(() {
-        _pages = imageUrls;
+        _allPages = imageUrls;
+        _pages = imageUrls.sublist(0, initialCount);
         _currentPage = startPage;
       });
       if (startPage > 0) {
@@ -178,7 +183,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (content.text == null || size.isEmpty) return;
     final settings =
         context.read<ReaderSettingsProvider>().forBook(widget.bookId);
-    final pages = _splitPages(
+    final allPages = _splitPages(
       text: content.text!,
       textWidth: size.width - 40,
       textHeight: size.height - 120,
@@ -189,9 +194,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
         context.read<LibraryProvider>().getProgress(widget.bookId)?.percent ??
             0;
     final startPage =
-        (savedPercent * pages.length).floor().clamp(0, pages.length - 1);
+        (savedPercent * allPages.length).floor().clamp(0, allPages.length - 1);
+    final initialCount =
+        (startPage + _pageChunkSize).clamp(_pageChunkSize, allPages.length);
     setState(() {
-      _pages = pages;
+      _allPages = allPages;
+      _pages = allPages.sublist(0, initialCount);
       _currentPage = startPage;
     });
     if (startPage > 0) {
@@ -200,6 +208,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
       });
     }
     _scheduleHide();
+  }
+
+  void _loadMorePages() {
+    if (_pages.length >= _allPages.length) return;
+    final nextEnd =
+        (_pages.length + _pageChunkSize).clamp(0, _allPages.length);
+    setState(() {
+      _pages = _allPages.sublist(0, nextEnd);
+    });
   }
 
   List<String> _splitPages({
@@ -280,8 +297,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   void _onPageChanged(int index) {
     setState(() => _currentPage = index);
-    if (_pages.isNotEmpty) {
-      final percent = (index + 1) / _pages.length;
+    // Load more pages when the user is within 3 pages of the loaded window end.
+    if (_pages.length > 3 && index >= _pages.length - 3) {
+      _loadMorePages();
+    }
+    if (_allPages.isNotEmpty) {
+      final percent = (index + 1) / _allPages.length;
       context.read<LibraryProvider>().updateProgress(widget.bookId, percent);
     }
   }
@@ -559,7 +580,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
             ReaderControls(
               visible: _showControls,
               currentPage: _currentPage + 1,
-              totalPages: _pages.length,
+              totalPages: _allPages.length,
               bgColor: _isImageBased
                   ? Colors.black.withValues(alpha: 0.7)
                   : bgColor.withValues(alpha: 0.95),
