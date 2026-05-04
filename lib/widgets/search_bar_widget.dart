@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 class SearchBarWidget extends StatefulWidget {
   final void Function(String) onChanged;
@@ -40,7 +41,7 @@ class _SearchBarWidgetState extends State<SearchBarWidget> {
         children: [
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 12),
-            child: Icon(Icons.search, size: 20),
+            child: PhosphorIcon(PhosphorIconsRegular.magnifyingGlass, size: 20),
           ),
           Expanded(
             child: TextField(
@@ -54,15 +55,20 @@ class _SearchBarWidgetState extends State<SearchBarWidget> {
               ),
             ),
           ),
-          if (_controller.text.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.clear, size: 18),
-              onPressed: () {
-                _controller.clear();
-                widget.onChanged('');
-                setState(() {});
-              },
-            ),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: _controller.text.isNotEmpty
+                ? IconButton(
+                    key: const ValueKey('clear'),
+                    icon: const PhosphorIcon(PhosphorIconsRegular.x, size: 18),
+                    onPressed: () {
+                      _controller.clear();
+                      widget.onChanged('');
+                      setState(() {});
+                    },
+                  )
+                : const SizedBox.shrink(key: ValueKey('empty')),
+          ),
         ],
       ),
     );

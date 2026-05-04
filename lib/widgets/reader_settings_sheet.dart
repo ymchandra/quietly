@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:provider/provider.dart';
 import '../constants/app_colors.dart';
 import '../models/reader_settings.dart';
@@ -81,7 +82,7 @@ class ReaderSettingsSheet extends StatelessWidget {
                   Row(
                     children: [
                       _SmallBtn(
-                        icon: Icons.remove,
+                        icon: PhosphorIconsRegular.minus,
                         onTap: settings.fontSize > 14
                             ? () => provider.updateForBook(bookId,
                                 {'fontSize': settings.fontSize - 2})
@@ -94,7 +95,7 @@ class ReaderSettingsSheet extends StatelessWidget {
                                 fontSize: 15, fontWeight: FontWeight.w600)),
                       ),
                       _SmallBtn(
-                        icon: Icons.add,
+                        icon: PhosphorIconsRegular.plus,
                         onTap: settings.fontSize < 26
                             ? () => provider.updateForBook(bookId,
                                 {'fontSize': settings.fontSize + 2})
@@ -192,7 +193,7 @@ class _ThemeCirclesSheet extends StatelessWidget {
 }
 
 class _SmallBtn extends StatelessWidget {
-  final IconData icon;
+  final PhosphorIconData icon;
   final VoidCallback? onTap;
   const _SmallBtn({required this.icon, required this.onTap});
   @override
@@ -208,11 +209,15 @@ class _SmallBtn extends StatelessWidget {
           color: cs.secondary,
           border: Border.all(color: cs.outline),
         ),
-        child: Icon(icon,
+        child: Center(
+          child: PhosphorIcon(
+            icon,
             size: 16,
             color: onTap != null
                 ? cs.onSurface
-                : cs.onSurface.withValues(alpha: 0.3)),
+                : cs.onSurface.withValues(alpha: 0.3),
+          ),
+        ),
       ),
     );
   }

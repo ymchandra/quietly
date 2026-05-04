@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:provider/provider.dart';
 import '../providers/library_provider.dart';
 import '../models/book.dart';
@@ -41,15 +42,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Widget _buildList(List<Book> books, LibraryProvider lib) {
     if (books.isEmpty) {
-      const msgs = [
-        ('No books in progress', 'Start reading to see books here'),
-        ('No downloads', 'Save books offline to read without internet'),
-        ('No finished books', 'Books you complete will appear here'),
+      final msgs = [
+        (PhosphorIconsRegular.bookOpen, 'No books in progress', 'Start reading to see books here'),
+        (PhosphorIconsRegular.downloadSimple, 'No downloads', 'Save books offline to read without internet'),
+        (PhosphorIconsRegular.checkCircle, 'No finished books', 'Books you complete will appear here'),
       ];
       return EmptyStateWidget(
-        icon: Icons.menu_book,
-        title: msgs[_selected].$1,
-        subtitle: msgs[_selected].$2,
+        icon: msgs[_selected].$1,
+        title: msgs[_selected].$2,
+        subtitle: msgs[_selected].$3,
       );
     }
     return ListView.builder(
@@ -60,6 +61,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         return BookListRow(
           book: book,
           progress: progress,
+          animationIndex: i,
           onLongPress: () => _confirmRemove(ctx, book, lib),
         );
       },

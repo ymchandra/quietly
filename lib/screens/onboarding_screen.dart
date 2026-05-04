@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:provider/provider.dart';
-import '../constants/app_colors.dart';
 import '../providers/user_profile_provider.dart';
 
 class OnboardingScreen extends StatefulWidget {
@@ -50,12 +51,20 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               children: [
                 const SizedBox(height: 24),
                 Center(
-                  child: Icon(
-                    Icons.menu_book_rounded,
-                    size: 64,
+                  child: PhosphorIcon(
+                    PhosphorIconsFill.bookOpen,
+                    size: 72,
                     color: cs.primary,
                   ),
-                ),
+                )
+                    .animate()
+                    .scale(
+                      begin: const Offset(0.5, 0.5),
+                      end: const Offset(1.0, 1.0),
+                      duration: 500.ms,
+                      curve: Curves.elasticOut,
+                    )
+                    .fadeIn(duration: 350.ms),
                 const SizedBox(height: 24),
                 Center(
                   child: Text(
@@ -67,7 +76,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     ),
                     textAlign: TextAlign.center,
                   ),
-                ),
+                )
+                    .animate(delay: 150.ms)
+                    .fadeIn(duration: 350.ms)
+                    .slideY(begin: 0.1, end: 0, duration: 350.ms),
                 const SizedBox(height: 8),
                 Center(
                   child: Text(
@@ -79,7 +91,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     ),
                     textAlign: TextAlign.center,
                   ),
-                ),
+                )
+                    .animate(delay: 230.ms)
+                    .fadeIn(duration: 350.ms)
+                    .slideY(begin: 0.1, end: 0, duration: 350.ms),
                 const SizedBox(height: 36),
                 _SectionCard(
                   title: 'Privacy & Agreements',
@@ -152,7 +167,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       ),
                     ],
                   ),
-                ),
+                )
+                    .animate(delay: 320.ms)
+                    .fadeIn(duration: 350.ms)
+                    .slideY(begin: 0.08, end: 0, duration: 350.ms),
                 const SizedBox(height: 20),
                 _SectionCard(
                   title: 'Your Age',
@@ -194,7 +212,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       ),
                     ],
                   ),
-                ),
+                )
+                    .animate(delay: 420.ms)
+                    .fadeIn(duration: 350.ms)
+                    .slideY(begin: 0.08, end: 0, duration: 350.ms),
                 const SizedBox(height: 32),
                 SizedBox(
                   width: double.infinity,
@@ -235,7 +256,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                             ),
                           ),
                   ),
-                ),
+                )
+                    .animate(delay: 520.ms)
+                    .fadeIn(duration: 350.ms)
+                    .slideY(begin: 0.08, end: 0, duration: 350.ms),
                 const SizedBox(height: 16),
               ],
             ),

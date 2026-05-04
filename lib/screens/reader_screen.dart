@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:provider/provider.dart';
 import '../constants/app_colors.dart';
 import '../models/book.dart';
@@ -344,8 +345,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                Icons.image_not_supported_outlined,
+              PhosphorIcon(
+                PhosphorIconsRegular.imageSquare,
                 color: Colors.white54,
                 size: 48,
               ),
@@ -448,8 +449,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 onPressed: () {
                   setState(() => _showDebugPanel = !_showDebugPanel);
                 },
-                icon: Icon(
-                  _showDebugPanel ? Icons.bug_report : Icons.bug_report_outlined,
+                icon: PhosphorIcon(
+                  _showDebugPanel
+                      ? PhosphorIconsFill.bug
+                      : PhosphorIconsRegular.bug,
                 ),
               ),
           ],
@@ -465,8 +468,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(
-                          Icons.menu_book_outlined,
+                        PhosphorIcon(
+                          PhosphorIconsRegular.bookOpen,
                           size: 64,
                           color: cs.onSurface.withValues(alpha: 0.35),
                         ),
@@ -495,13 +498,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
                           children: [
                             OutlinedButton.icon(
                               onPressed: () => Navigator.pop(context),
-                              icon: const Icon(Icons.arrow_back, size: 18),
+                              icon: const PhosphorIcon(
+                                  PhosphorIconsRegular.arrowLeft,
+                                  size: 18),
                               label: const Text('Go Back'),
                             ),
                             const SizedBox(width: 12),
                             FilledButton.icon(
                               onPressed: _load,
-                              icon: const Icon(Icons.refresh, size: 18),
+                              icon: const PhosphorIcon(
+                                  PhosphorIconsRegular.arrowClockwise,
+                                  size: 18),
                               label: const Text('Retry'),
                             ),
                           ],
@@ -619,10 +626,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
                         onPressed: () {
                           setState(() => _showDebugPanel = !_showDebugPanel);
                         },
-                        icon: Icon(
+                        icon: PhosphorIcon(
                           _showDebugPanel
-                              ? Icons.bug_report
-                              : Icons.bug_report_outlined,
+                              ? PhosphorIconsFill.bug
+                              : PhosphorIconsRegular.bug,
                           color: textColor,
                         ),
                       ),

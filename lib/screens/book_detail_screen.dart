@@ -1,7 +1,9 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:provider/provider.dart';
 import '../models/book.dart';
 import '../providers/library_provider.dart';
@@ -115,17 +117,22 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         leading: BackButton(onPressed: () => context.pop()),
         actions: [
           IconButton(
-            icon: Icon(inWishlist ? Icons.favorite : Icons.favorite_border,
-                color: inWishlist ? cs.error : null),
+            icon: PhosphorIcon(
+              inWishlist
+                  ? PhosphorIconsFill.heart
+                  : PhosphorIconsRegular.heart,
+              color: inWishlist ? cs.error : null,
+            ),
             onPressed: () => lib.toggleWishlist(book),
             tooltip: 'Wishlist',
           ),
           IconButton(
-            icon: Icon(
-                inReadLater
-                    ? Icons.watch_later
-                    : Icons.watch_later_outlined,
-                color: inReadLater ? cs.primary : null),
+            icon: PhosphorIcon(
+              inReadLater
+                  ? PhosphorIconsFill.clockCounterClockwise
+                  : PhosphorIconsRegular.clockCounterClockwise,
+              color: inReadLater ? cs.primary : null,
+            ),
             onPressed: () => lib.toggleReadLater(book),
             tooltip: 'Read Later',
           ),
@@ -155,9 +162,11 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                               color: cs.onSurface.withValues(alpha: 0.7))),
                       const SizedBox(height: 8),
                       Row(children: [
-                        Icon(Icons.download,
-                            size: 14,
-                            color: cs.onSurface.withValues(alpha: 0.5)),
+                        PhosphorIcon(
+                          PhosphorIconsRegular.downloadSimple,
+                          size: 14,
+                          color: cs.onSurface.withValues(alpha: 0.5),
+                        ),
                         const SizedBox(width: 4),
                         Text('${book.downloadCount} downloads',
                             style: TextStyle(
@@ -174,7 +183,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                   ),
                 ),
               ],
-            ),
+            ).animate().fadeIn(duration: 300.ms).slideY(begin: 0.05, end: 0),
             const SizedBox(height: 24),
             SizedBox(
               width: double.infinity,
@@ -192,7 +201,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                   style: const TextStyle(fontSize: 16),
                 ),
               ),
-            ),
+            ).animate(delay: 100.ms).fadeIn(duration: 280.ms).slideY(begin: 0.06, end: 0),
             const SizedBox(height: 10),
             SizedBox(
               width: double.infinity,
@@ -213,7 +222,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                                 : 'No text source',
                       ),
               ),
-            ),
+            ).animate(delay: 160.ms).fadeIn(duration: 280.ms).slideY(begin: 0.06, end: 0),
             if (!_checkingReadability && !_canRead) ...[
               const SizedBox(height: 8),
               Container(
@@ -226,7 +235,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.info_outline,
+                    PhosphorIcon(PhosphorIconsRegular.info,
                         size: 16, color: cs.onErrorContainer),
                     const SizedBox(width: 8),
                     Expanded(
@@ -344,7 +353,7 @@ class _AvailabilityBadge extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.menu_book_outlined,
+            PhosphorIcon(PhosphorIconsRegular.bookOpen,
                 size: 13, color: cs.onPrimaryContainer),
             const SizedBox(width: 4),
             Text(
@@ -367,7 +376,8 @@ class _AvailabilityBadge extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.lock_outline, size: 13, color: cs.onErrorContainer),
+          PhosphorIcon(PhosphorIconsRegular.lock,
+              size: 13, color: cs.onErrorContainer),
           const SizedBox(width: 4),
           Text(
             'Not freely available',
@@ -389,36 +399,42 @@ class _Cover extends StatelessWidget {
   Widget build(BuildContext context) {
     final url = book.coverUrl;
     if (url == null) {
-      return Container(
-        width: 120,
-        height: 180,
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.secondary,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-            book.title.substring(0, book.title.length > 2 ? 2 : 1),
-            style: const TextStyle(fontSize: 24)),
-      );
-    }
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: CachedNetworkImage(
-        imageUrl: url,
-        width: 120,
-        height: 180,
-        fit: BoxFit.cover,
-        placeholder: (_, __) => Container(
-            width: 120,
-            height: 180,
-            color: Theme.of(context).colorScheme.secondary),
-        errorWidget: (_, __, ___) => Container(
+      return Hero(
+        tag: 'book-cover-${book.id}',
+        child: Container(
           width: 120,
           height: 180,
-          color: Theme.of(context).colorScheme.secondary,
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.secondary,
+            borderRadius: BorderRadius.circular(8),
+          ),
           alignment: Alignment.center,
-          child: const Icon(Icons.book),
+          child: Text(
+              book.title.substring(0, book.title.length > 2 ? 2 : 1),
+              style: const TextStyle(fontSize: 24)),
+        ),
+      );
+    }
+    return Hero(
+      tag: 'book-cover-${book.id}',
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: CachedNetworkImage(
+          imageUrl: url,
+          width: 120,
+          height: 180,
+          fit: BoxFit.cover,
+          placeholder: (_, __) => Container(
+              width: 120,
+              height: 180,
+              color: Theme.of(context).colorScheme.secondary),
+          errorWidget: (_, __, ___) => Container(
+            width: 120,
+            height: 180,
+            color: Theme.of(context).colorScheme.secondary,
+            alignment: Alignment.center,
+            child: const PhosphorIcon(PhosphorIconsRegular.book),
+          ),
         ),
       ),
     );

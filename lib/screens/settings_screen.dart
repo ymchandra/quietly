@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:provider/provider.dart';
 import '../constants/app_colors.dart';
 import '../models/reader_settings.dart';
@@ -204,21 +205,21 @@ class _FontSizeRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        _CircleBtn(icon: Icons.remove, onTap: onMinus),
+        _CircleBtn(icon: PhosphorIconsRegular.minus, onTap: onMinus),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Text('${size.toInt()}',
               style: const TextStyle(
                   fontSize: 16, fontWeight: FontWeight.w600)),
         ),
-        _CircleBtn(icon: Icons.add, onTap: onPlus),
+        _CircleBtn(icon: PhosphorIconsRegular.plus, onTap: onPlus),
       ],
     );
   }
 }
 
 class _CircleBtn extends StatelessWidget {
-  final IconData icon;
+  final PhosphorIconData icon;
   final VoidCallback? onTap;
   const _CircleBtn({required this.icon, required this.onTap});
   @override
@@ -234,11 +235,15 @@ class _CircleBtn extends StatelessWidget {
           color: cs.secondary,
           border: Border.all(color: cs.outline),
         ),
-        child: Icon(icon,
+        child: Center(
+          child: PhosphorIcon(
+            icon,
             size: 18,
             color: onTap != null
                 ? cs.onSurface
-                : cs.onSurface.withValues(alpha: 0.3)),
+                : cs.onSurface.withValues(alpha: 0.3),
+          ),
+        ),
       ),
     );
   }

@@ -1,21 +1,56 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 import '../models/book.dart';
 
-class BookCard extends StatelessWidget {
+class BookCard extends StatefulWidget {
   final Book book;
-  const BookCard({super.key, required this.book});
+  final int? animationIndex;
+  const BookCard({super.key, required this.book, this.animationIndex});
+
+  @override
+  State<BookCard> createState() => _BookCardState();
+}
+
+class _BookCardState extends State<BookCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pressController;
+  late final Animation<double> _pressScale;
+
+  @override
+  void initState() {
+    super.initState();
+    _pressController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 120),
+    );
+    _pressScale = Tween<double>(begin: 1.0, end: 0.94).animate(
+      CurvedAnimation(parent: _pressController, curve: Curves.easeIn),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pressController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: () => context.push('/book/${book.id}', extra: book),
+    final delay = ((widget.animationIndex ?? 0) * 60).ms;
+    return GestureDetector(
+      onTapDown: (_) => _pressController.forward(),
+      onTapUp: (_) {
+        _pressController.reverse();
+        context.push('/book/${widget.book.id}', extra: widget.book);
+      },
+      onTapCancel: () => _pressController.reverse(),
+      child: ScaleTransition(
+        scale: _pressScale,
         child: SizedBox(
           width: 120,
           child: Column(
@@ -25,9 +60,9 @@ class BookCard extends StatelessWidget {
                 children: [
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: book.coverUrl != null
+                    child: widget.book.coverUrl != null
                         ? CachedNetworkImage(
-                            imageUrl: book.coverUrl!,
+                            imageUrl: widget.book.coverUrl!,
                             width: 120,
                             height: 180,
                             fit: BoxFit.cover,
@@ -36,7 +71,7 @@ class BookCard extends StatelessWidget {
                           )
                         : _placeholder(cs),
                   ),
-                  if (!book.hasFullText)
+                  if (!widget.book.hasFullText)
                     Positioned(
                       bottom: 6,
                       left: 0,
@@ -52,8 +87,11 @@ class BookCard extends StatelessWidget {
                           child: const Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.lock_outline,
-                                  size: 10, color: Colors.white),
+                              PhosphorIcon(
+                                PhosphorIconsRegular.lock,
+                                size: 10,
+                                color: Colors.white,
+                              ),
                               SizedBox(width: 3),
                               Text(
                                 'Not free',
@@ -71,7 +109,7 @@ class BookCard extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                book.title,
+                widget.book.title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: GoogleFonts.lora(
@@ -79,7 +117,7 @@ class BookCard extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(
-                book.authorName,
+                widget.book.authorName,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -90,7 +128,10 @@ class BookCard extends StatelessWidget {
           ),
         ),
       ),
-    );
+    )
+        .animate(delay: delay)
+        .fadeIn(duration: 280.ms)
+        .slideY(begin: 0.08, end: 0, duration: 280.ms, curve: Curves.easeOut);
   }
 
   Widget _placeholder(ColorScheme cs) => Container(
@@ -102,7 +143,7 @@ class BookCard extends StatelessWidget {
         ),
         alignment: Alignment.center,
         child: Text(
-          book.title.isNotEmpty ? book.title[0] : '?',
+          widget.book.title.isNotEmpty ? widget.book.title[0] : '?',
           style: TextStyle(
               fontSize: 28, color: cs.onSurface.withValues(alpha: 0.4)),
         ),

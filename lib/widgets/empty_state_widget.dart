@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class EmptyStateWidget extends StatelessWidget {
@@ -23,21 +24,32 @@ class EmptyStateWidget extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 72,
-              height: 72,
+              width: 80,
+              height: 80,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: cs.primary.withValues(alpha: 0.12),
               ),
-              child: Icon(icon, size: 32, color: cs.primary),
-            ),
-            const SizedBox(height: 16),
+              child: Icon(icon, size: 36, color: cs.primary),
+            )
+                .animate()
+                .scale(
+                  begin: const Offset(0.6, 0.6),
+                  end: const Offset(1.0, 1.0),
+                  duration: 400.ms,
+                  curve: Curves.elasticOut,
+                )
+                .fadeIn(duration: 300.ms),
+            const SizedBox(height: 18),
             Text(
               title,
               style: GoogleFonts.lora(
                   fontSize: 20, fontWeight: FontWeight.w600),
               textAlign: TextAlign.center,
-            ),
+            )
+                .animate(delay: 120.ms)
+                .fadeIn(duration: 300.ms)
+                .slideY(begin: 0.1, end: 0, duration: 300.ms),
             const SizedBox(height: 8),
             Text(
               subtitle,
@@ -45,7 +57,10 @@ class EmptyStateWidget extends StatelessWidget {
                   fontSize: 15,
                   color: cs.onSurface.withValues(alpha: 0.6)),
               textAlign: TextAlign.center,
-            ),
+            )
+                .animate(delay: 200.ms)
+                .fadeIn(duration: 300.ms)
+                .slideY(begin: 0.1, end: 0, duration: 300.ms),
           ],
         ),
       ),

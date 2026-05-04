@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 class ReaderControls extends StatelessWidget {
   final bool visible;
@@ -50,12 +51,14 @@ class ReaderControls extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     IconButton(
-                      icon: Icon(Icons.arrow_back, color: textColor),
+                      icon: PhosphorIcon(PhosphorIconsRegular.arrowLeft,
+                          color: textColor),
                       onPressed: onBack,
                     ),
                     if (showSettings)
                       IconButton(
-                        icon: Icon(Icons.text_fields, color: textColor),
+                        icon: PhosphorIcon(PhosphorIconsRegular.textT,
+                            color: textColor),
                         onPressed: onSettings,
                       ),
                   ],

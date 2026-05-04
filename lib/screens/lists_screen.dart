@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:provider/provider.dart';
 import '../providers/library_provider.dart';
 import '../models/book.dart';
@@ -40,14 +41,14 @@ class _ListsScreenState extends State<ListsScreen> {
 
   Widget _buildList(List<Book> books, LibraryProvider lib) {
     if (books.isEmpty) {
-      const msgs = [
-        ('Your wishlist is empty', 'Add books you want to read'),
-        ('Read Later is empty', 'Save books to read when you have time'),
+      final msgs = [
+        (PhosphorIconsRegular.heart, 'Your wishlist is empty', 'Add books you want to read'),
+        (PhosphorIconsRegular.clockCounterClockwise, 'Read Later is empty', 'Save books to read when you have time'),
       ];
       return EmptyStateWidget(
-        icon: Icons.bookmark_border,
-        title: msgs[_selected].$1,
-        subtitle: msgs[_selected].$2,
+        icon: msgs[_selected].$1,
+        title: msgs[_selected].$2,
+        subtitle: msgs[_selected].$3,
       );
     }
     return ListView.builder(
@@ -56,6 +57,7 @@ class _ListsScreenState extends State<ListsScreen> {
         final book = books[i];
         return BookListRow(
           book: book,
+          animationIndex: i,
           onLongPress: () => _confirmRemove(ctx, book, lib),
         );
       },

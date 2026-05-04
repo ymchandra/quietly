@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:provider/provider.dart';
 import '../models/book.dart';
 import '../providers/user_profile_provider.dart';
@@ -197,10 +199,10 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                       onPressed: () {
                         setState(() => _showDebugPanel = !_showDebugPanel);
                       },
-                      icon: Icon(
+                      icon: PhosphorIcon(
                         _showDebugPanel
-                            ? Icons.bug_report
-                            : Icons.bug_report_outlined,
+                            ? PhosphorIconsFill.bug
+                            : PhosphorIconsRegular.bug,
                       ),
                     ),
                 ],
@@ -343,7 +345,10 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                             }
                             return Padding(
                               padding: const EdgeInsets.only(right: 12),
-                              child: BookCard(book: books[j]),
+                              child: BookCard(
+                                book: books[j],
+                                animationIndex: j,
+                              ),
                             );
                           },
                         ),
@@ -399,7 +404,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.search_off, size: 36, color: cs.outline),
+              PhosphorIcon(PhosphorIconsRegular.magnifyingGlass,
+                  size: 36, color: cs.outline),
               const SizedBox(height: 10),
               Text(
                 'No books found for "$_query"',
@@ -413,7 +419,10 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                 style: TextStyle(color: cs.onSurface.withValues(alpha: 0.7)),
               ),
             ],
-          ),
+          )
+              .animate()
+              .fadeIn(duration: 300.ms)
+              .slideY(begin: 0.1, end: 0, duration: 300.ms),
         ),
       );
     }
@@ -427,7 +436,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         childAspectRatio: 0.55,
       ),
       itemCount: _searchResults.length,
-      itemBuilder: (ctx, i) => BookCard(book: _searchResults[i]),
+      itemBuilder: (ctx, i) =>
+          BookCard(book: _searchResults[i], animationIndex: i),
     );
   }
 
@@ -559,30 +569,48 @@ class _ShowAllCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: onTap,
+    return Material(
+      color: cs.surface,
       borderRadius: BorderRadius.circular(12),
-      child: Container(
-        width: 120,
-        height: 180,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: cs.outline),
-          color: cs.surface,
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.arrow_forward, color: cs.primary),
-            const SizedBox(height: 8),
-            Text(
-              'Show all',
-              style: TextStyle(
-                color: cs.primary,
-                fontWeight: FontWeight.w600,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          width: 120,
+          height: 180,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: cs.outline),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: cs.primary.withValues(alpha: 0.12),
+                ),
+                child: Center(
+                  child: PhosphorIcon(
+                    PhosphorIconsRegular.arrowRight,
+                    color: cs.primary,
+                    size: 20,
+                  ),
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 10),
+              Text(
+                'Show all',
+                style: TextStyle(
+                  color: cs.primary,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
