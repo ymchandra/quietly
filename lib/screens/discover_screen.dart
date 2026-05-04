@@ -191,7 +191,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                       ),
                     ),
                   ),
-                          if (kDebugMode)
+                  if (kDebugMode)
                     IconButton(
                       tooltip: _showDebugPanel
                           ? 'Hide API debug info'
@@ -569,44 +569,48 @@ class _ShowAllCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 120,
-        height: 180,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: cs.outline),
-          color: cs.surface,
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: cs.primary.withValues(alpha: 0.12),
-              ),
-              child: Center(
-                child: PhosphorIcon(
-                  PhosphorIconsRegular.arrowRight,
-                  color: cs.primary,
-                  size: 20,
+    return Material(
+      color: cs.surface,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          width: 120,
+          height: 180,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: cs.outline),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: cs.primary.withValues(alpha: 0.12),
+                ),
+                child: Center(
+                  child: PhosphorIcon(
+                    PhosphorIconsRegular.arrowRight,
+                    color: cs.primary,
+                    size: 20,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              'Show all',
-              style: TextStyle(
-                color: cs.primary,
-                fontWeight: FontWeight.w600,
-                fontSize: 13,
+              const SizedBox(height: 10),
+              Text(
+                'Show all',
+                style: TextStyle(
+                  color: cs.primary,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
