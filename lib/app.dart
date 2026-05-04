@@ -10,71 +10,107 @@ import 'screens/book_detail_screen.dart';
 import 'screens/reader_screen.dart';
 import 'screens/main_screen.dart';
 import 'screens/topic_books_screen.dart';
+import 'screens/onboarding_screen.dart';
 import 'models/book.dart';
+import 'providers/user_profile_provider.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
 final _shellNavigatorKey = GlobalKey<NavigatorState>();
 
-final _router = GoRouter(
-  navigatorKey: _rootNavigatorKey,
-  initialLocation: '/',
-  routes: [
-    StatefulShellRoute.indexedStack(
-      builder: (context, state, shell) => MainScreen(shell: shell),
-      branches: [
-        StatefulShellBranch(
-          navigatorKey: _shellNavigatorKey,
-          routes: [
-            GoRoute(path: '/', builder: (_, __) => const DiscoverScreen()),
+class QuietlyApp extends StatefulWidget {
+  final UserProfileProvider userProfile;
+  const QuietlyApp({super.key, required this.userProfile});
+
+  @override
+  State<QuietlyApp> createState() => _QuietlyAppState();
+}
+
+class _QuietlyAppState extends State<QuietlyApp> {
+  late final GoRouter _router;
+
+  @override
+  void initState() {
+    super.initState();
+    _router = GoRouter(
+      navigatorKey: _rootNavigatorKey,
+      initialLocation:
+          widget.userProfile.hasCompletedOnboarding ? '/' : '/onboarding',
+      refreshListenable: widget.userProfile,
+      redirect: (context, state) {
+        final done = widget.userProfile.hasCompletedOnboarding;
+        final onOnboarding = state.matchedLocation == '/onboarding';
+        if (!done && !onOnboarding) return '/onboarding';
+        if (done && onOnboarding) return '/';
+        return null;
+      },
+      routes: [
+        GoRoute(
+          path: '/onboarding',
+          builder: (_, __) => const OnboardingScreen(),
+        ),
+        StatefulShellRoute.indexedStack(
+          builder: (context, state, shell) => MainScreen(shell: shell),
+          branches: [
+            StatefulShellBranch(
+              navigatorKey: _shellNavigatorKey,
+              routes: [
+                GoRoute(path: '/', builder: (_, __) => const DiscoverScreen()),
+              ],
+            ),
+            StatefulShellBranch(routes: [
+              GoRoute(
+                  path: '/library', builder: (_, __) => const LibraryScreen()),
+            ]),
+            StatefulShellBranch(routes: [
+              GoRoute(
+                  path: '/lists', builder: (_, __) => const ListsScreen()),
+            ]),
+            StatefulShellBranch(routes: [
+              GoRoute(
+                  path: '/settings',
+                  builder: (_, __) => const SettingsScreen()),
+            ]),
           ],
         ),
-        StatefulShellBranch(routes: [
-          GoRoute(path: '/library', builder: (_, __) => const LibraryScreen()),
-        ]),
-        StatefulShellBranch(routes: [
-          GoRoute(path: '/lists', builder: (_, __) => const ListsScreen()),
-        ]),
-        StatefulShellBranch(routes: [
-          GoRoute(
-              path: '/settings', builder: (_, __) => const SettingsScreen()),
-        ]),
+        GoRoute(
+          parentNavigatorKey: _rootNavigatorKey,
+          path: '/book/:id',
+          builder: (_, state) {
+            final extra = state.extra;
+            return BookDetailScreen(
+              bookId: int.parse(state.pathParameters['id']!),
+              initialBook: extra is Book ? extra : null,
+            );
+          },
+        ),
+        GoRoute(
+          parentNavigatorKey: _rootNavigatorKey,
+          path: '/reader/:id',
+          builder: (_, state) {
+            final extra = state.extra;
+            return ReaderScreen(
+              bookId: int.parse(state.pathParameters['id']!),
+              initialBook: extra is Book ? extra : null,
+            );
+          },
+        ),
+        GoRoute(
+          parentNavigatorKey: _rootNavigatorKey,
+          path: '/discover/topic/:topic',
+          builder: (_, state) => TopicBooksScreen(
+            topic: state.pathParameters['topic']!,
+            label: state.uri.queryParameters['label'] ?? 'Category',
+          ),
+        ),
       ],
-    ),
-    GoRoute(
-      parentNavigatorKey: _rootNavigatorKey,
-      path: '/book/:id',
-      builder: (_, state) {
-        final extra = state.extra;
-        return BookDetailScreen(
-          bookId: int.parse(state.pathParameters['id']!),
-          initialBook: extra is Book ? extra : null,
-        );
-      },
-    ),
-    GoRoute(
-      parentNavigatorKey: _rootNavigatorKey,
-      path: '/reader/:id',
-      builder: (_, state) {
-        final extra = state.extra;
-        return ReaderScreen(
-          bookId: int.parse(state.pathParameters['id']!),
-          initialBook: extra is Book ? extra : null,
-        );
-      },
-    ),
-    GoRoute(
-      parentNavigatorKey: _rootNavigatorKey,
-      path: '/discover/topic/:topic',
-      builder: (_, state) => TopicBooksScreen(
-        topic: state.pathParameters['topic']!,
-        label: state.uri.queryParameters['label'] ?? 'Category',
-      ),
-    ),
-  ],
-);
+    );
+  }
 
-class QuietlyApp extends StatelessWidget {
-  const QuietlyApp({super.key});
+  @override
+  void dispose() {
+    _router.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -175,3 +211,4 @@ class QuietlyApp extends StatelessWidget {
     );
   }
 }
+
