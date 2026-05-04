@@ -44,25 +44,17 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   OpenLibraryDebugSnapshot? _searchDebug;
   bool _showDebugPanel = false;
 
-  List<Map<String, String>> get _topics {
-    final allowed =
-        context.read<UserProfileProvider>().allowedTopics.toSet();
-    return _allTopics
-        .where((t) => allowed.contains(t['topic']))
-        .toList()
-        .cast<Map<String, String>>();
-  }
-
+  List<Map<String, String>> _topics = [];
   bool _initialized = false;
-
-  @override
-  void initState() {
-    super.initState();
-  }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final allowed =
+        context.read<UserProfileProvider>().allowedTopics.toSet();
+    _topics = _allTopics
+        .where((t) => allowed.contains(t['topic']))
+        .toList();
     if (!_initialized) {
       _initialized = true;
       _loadInitialShelves();

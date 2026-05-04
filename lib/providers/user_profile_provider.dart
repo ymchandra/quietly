@@ -24,7 +24,7 @@ class UserProfileProvider extends ChangeNotifier {
 
   List<String> get allowedTopics {
     final age = _userAge;
-    if (age == null) return _adultTopics;
+    if (age == null) return _childTopics;
     if (age < 13) return _childTopics;
     if (age < 18) return _teenTopics;
     return _adultTopics;

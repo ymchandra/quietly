@@ -150,17 +150,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                           ),
                         ],
                       ),
-                      if (!_agreementsAccepted && _loading)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 12, top: 4),
-                          child: Text(
-                            'Please accept the agreements to continue.',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: cs.error,
-                            ),
-                          ),
-                        ),
                     ],
                   ),
                 ),
@@ -214,10 +203,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                         ? null
                         : () {
                             if (!_agreementsAccepted) {
-                              setState(() => _loading = true);
-                              // Trigger rebuild to show the checkbox error.
-                              Future.delayed(
-                                  Duration.zero, () => setState(() => _loading = false));
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
                                   content: Text(
