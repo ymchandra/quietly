@@ -1,24 +1,29 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 import '../models/book.dart';
 
 class BookListRow extends StatelessWidget {
   final Book book;
   final double? progress;
   final VoidCallback? onLongPress;
+  final int? animationIndex;
 
   const BookListRow({
     super.key,
     required this.book,
     this.progress,
     this.onLongPress,
+    this.animationIndex,
   });
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final delay = ((animationIndex ?? 0) * 50).ms;
     return InkWell(
       onTap: () => context.push('/book/${book.id}', extra: book),
       onLongPress: onLongPress,
@@ -27,18 +32,21 @@ class BookListRow extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: book.coverUrl != null
-                  ? CachedNetworkImage(
-                      imageUrl: book.coverUrl!,
-                      width: 60,
-                      height: 90,
-                      fit: BoxFit.cover,
-                      placeholder: (_, __) => _placeholder(cs),
-                      errorWidget: (_, __, ___) => _placeholder(cs),
-                    )
-                  : _placeholder(cs),
+            Hero(
+              tag: 'book-cover-${book.id}',
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: book.coverUrl != null
+                    ? CachedNetworkImage(
+                        imageUrl: book.coverUrl!,
+                        width: 60,
+                        height: 90,
+                        fit: BoxFit.cover,
+                        placeholder: (_, __) => _placeholder(cs),
+                        errorWidget: (_, __, ___) => _placeholder(cs),
+                      )
+                    : _placeholder(cs),
+              ),
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -59,9 +67,11 @@ class BookListRow extends StatelessWidget {
                   if (!book.hasFullText)
                     Row(
                       children: [
-                        Icon(Icons.lock_outline,
-                            size: 12,
-                            color: cs.onSurface.withValues(alpha: 0.45)),
+                        PhosphorIcon(
+                          PhosphorIconsRegular.lock,
+                          size: 12,
+                          color: cs.onSurface.withValues(alpha: 0.45),
+                        ),
                         const SizedBox(width: 4),
                         Text(
                           'Not freely available',
@@ -74,8 +84,11 @@ class BookListRow extends StatelessWidget {
                   else
                     Row(
                       children: [
-                        Icon(Icons.menu_book_outlined,
-                            size: 12, color: cs.primary.withValues(alpha: 0.7)),
+                        PhosphorIcon(
+                          PhosphorIconsRegular.bookOpen,
+                          size: 12,
+                          color: cs.primary.withValues(alpha: 0.7),
+                        ),
                         const SizedBox(width: 4),
                         Text(
                           'Free to read',
@@ -109,7 +122,10 @@ class BookListRow extends StatelessWidget {
           ],
         ),
       ),
-    );
+    )
+        .animate(delay: delay)
+        .fadeIn(duration: 250.ms)
+        .slideX(begin: 0.04, end: 0, duration: 250.ms, curve: Curves.easeOut);
   }
 
   Widget _placeholder(ColorScheme cs) => Container(
@@ -120,7 +136,10 @@ class BookListRow extends StatelessWidget {
           borderRadius: BorderRadius.circular(6),
         ),
         alignment: Alignment.center,
-        child: Icon(Icons.book,
-            size: 20, color: cs.onSurface.withValues(alpha: 0.3)),
+        child: PhosphorIcon(
+          PhosphorIconsRegular.book,
+          size: 20,
+          color: cs.onSurface.withValues(alpha: 0.3),
+        ),
       );
 }

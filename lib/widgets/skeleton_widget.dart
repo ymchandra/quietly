@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:shimmer/shimmer.dart';
 
-class SkeletonWidget extends StatefulWidget {
+class SkeletonWidget extends StatelessWidget {
   final double width;
   final double height;
   final double borderRadius;
@@ -13,44 +14,21 @@ class SkeletonWidget extends StatefulWidget {
   });
 
   @override
-  State<SkeletonWidget> createState() => _SkeletonWidgetState();
-}
-
-class _SkeletonWidgetState extends State<SkeletonWidget>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _opacity;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 900));
-    _opacity = Tween<double>(begin: 0.4, end: 1.0).animate(
-        CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
-    _controller.repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return AnimatedBuilder(
-      animation: _opacity,
-      builder: (_, __) => Opacity(
-        opacity: _opacity.value,
-        child: Container(
-          width: widget.width,
-          height: widget.height,
-          decoration: BoxDecoration(
-            color: cs.secondary,
-            borderRadius: BorderRadius.circular(widget.borderRadius),
-          ),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final baseColor =
+        isDark ? const Color(0xFF3A3A3A) : const Color(0xFFE0E0E0);
+    final highlightColor =
+        isDark ? const Color(0xFF5A5A5A) : const Color(0xFFF5F5F5);
+    return Shimmer.fromColors(
+      baseColor: baseColor,
+      highlightColor: highlightColor,
+      child: Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: baseColor,
+          borderRadius: BorderRadius.circular(borderRadius),
         ),
       ),
     );
