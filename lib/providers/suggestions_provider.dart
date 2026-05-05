@@ -116,19 +116,54 @@ class SuggestionsProvider extends ChangeNotifier {
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
   List<String> _topSubjects(int n) {
+    // Count how many distinct events each cleaned subject/shelf appears in,
+    // considering both subjects (genre) and bookshelves (book type/category).
     final counts = <String, int>{};
     for (final event in _history) {
-      for (final s in event.subjects) {
-        // Clean up common subject strings.
+      // Use a per-event set so one book contributes at most one count per subject.
+      final seen = <String>{};
+      for (final s in [...event.subjects, ...event.bookshelves]) {
         final clean = _cleanSubject(s);
-        if (clean.isNotEmpty) {
+        if (clean.isNotEmpty && seen.add(clean)) {
           counts[clean] = (counts[clean] ?? 0) + 1;
         }
       }
     }
-    final sorted = counts.entries.toList()
+
+    if (counts.isEmpty) return [];
+
+    // Sort by frequency descending.
+    final byFrequency = counts.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
-    return sorted.take(n).map((e) => e.key).toList();
+
+    // First, take subjects that genuinely recur across multiple books — these
+    // represent the user's established preferences.
+    final result = <String>[];
+    final used = <String>{};
+    for (final entry in byFrequency) {
+      if (result.length >= n) break;
+      if (entry.value > 1) {
+        result.add(entry.key);
+        used.add(entry.key);
+      }
+    }
+
+    // For any remaining slots, sample one representative subject per history
+    // event (walking newest-first) so that the full reading history is
+    // reflected rather than defaulting to only the most recently read book's
+    // subjects — which happens when all counts are equal (each book unique).
+    for (final event in _history) {
+      if (result.length >= n) break;
+      for (final s in [...event.subjects, ...event.bookshelves]) {
+        final clean = _cleanSubject(s);
+        if (clean.isNotEmpty && used.add(clean)) {
+          result.add(clean);
+          break; // one representative subject per event for diversity
+        }
+      }
+    }
+
+    return result;
   }
 
   List<String> _topAuthors(int n) {
