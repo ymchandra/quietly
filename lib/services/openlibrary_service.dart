@@ -581,6 +581,7 @@ class OpenLibraryService {
           doc['edition_count'] as int? ??
           0,
       hasFullText: hasFullText,
+      ebookAccess: EbookAccess.fromString(doc['ebook_access'] as String?),
     );
   }
 
@@ -635,6 +636,13 @@ class OpenLibraryService {
         : (mergedSubjects.isNotEmpty
             ? mergedSubjects.take(6).toList()
             : fallback.bookshelves);
+    // Prefer the most informative ebook access value: a known non-unknown value
+    // from primary takes precedence; otherwise fall back to primary's value,
+    // then fallback's value.
+    final mergedEbookAccess =
+        primary.ebookAccess != EbookAccess.unknown
+            ? primary.ebookAccess
+            : fallback.ebookAccess;
     return Book(
       id: fallback.id,
       title: primary.title.isNotEmpty ? primary.title : fallback.title,
@@ -654,6 +662,7 @@ class OpenLibraryService {
       // primary may carry the fresh `public_scan_b` flag while fallback may
       // have IA identifiers discovered earlier.
       hasFullText: primary.hasFullText || fallback.hasFullText,
+      ebookAccess: mergedEbookAccess,
     );
   }
 

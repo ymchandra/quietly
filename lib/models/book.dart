@@ -18,6 +18,54 @@ class Person {
       };
 }
 
+/// Access level values returned by the Open Library `ebook_access` field.
+enum EbookAccess {
+  /// Freely available — public domain text that can be read without restriction.
+  publicDomain,
+
+  /// Available via controlled digital lending (borrowing), not freely readable.
+  borrowable,
+
+  /// Only accessible to users with print disabilities.
+  printDisabled,
+
+  /// No ebook edition is available through Open Library.
+  noEbook,
+
+  /// Access status is unknown or not yet fetched.
+  unknown;
+
+  static EbookAccess fromString(String? value) {
+    switch (value) {
+      case 'public_domain':
+        return EbookAccess.publicDomain;
+      case 'borrowable':
+        return EbookAccess.borrowable;
+      case 'printdisabled':
+        return EbookAccess.printDisabled;
+      case 'no_ebook':
+        return EbookAccess.noEbook;
+      default:
+        return EbookAccess.unknown;
+    }
+  }
+
+  String toJson() {
+    switch (this) {
+      case EbookAccess.publicDomain:
+        return 'public_domain';
+      case EbookAccess.borrowable:
+        return 'borrowable';
+      case EbookAccess.printDisabled:
+        return 'printdisabled';
+      case EbookAccess.noEbook:
+        return 'no_ebook';
+      case EbookAccess.unknown:
+        return 'unknown';
+    }
+  }
+}
+
 class Book {
   final int id;
   final String title;
@@ -32,6 +80,10 @@ class Book {
   /// Derived from the Open Library `public_scan_b` / `has_fulltext` fields.
   final bool hasFullText;
 
+  /// The ebook access level reported by the Open Library `ebook_access` field.
+  /// [EbookAccess.unknown] means the value has not been fetched yet.
+  final EbookAccess ebookAccess;
+
   const Book({
     required this.id,
     required this.title,
@@ -42,6 +94,7 @@ class Book {
     required this.formats,
     required this.downloadCount,
     this.hasFullText = false,
+    this.ebookAccess = EbookAccess.unknown,
   });
 
   String? get coverUrl => formats['image/jpeg'];
@@ -67,6 +120,7 @@ class Book {
       formats: rawFormats.map((k, v) => MapEntry(k, v.toString())),
       downloadCount: json['download_count'] as int? ?? 0,
       hasFullText: json['has_full_text'] as bool? ?? false,
+      ebookAccess: EbookAccess.fromString(json['ebook_access'] as String?),
     );
   }
 
@@ -80,6 +134,7 @@ class Book {
         'formats': formats,
         'download_count': downloadCount,
         'has_full_text': hasFullText,
+        'ebook_access': ebookAccess.toJson(),
       };
 }
 

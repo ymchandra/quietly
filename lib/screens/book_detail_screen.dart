@@ -29,16 +29,31 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   Book? _book;
   bool _loading = true;
   bool _downloading = false;
+  // _checkingReadability is only true when we must do a network probe because
+  // the ebook_access value is still unknown after loading.
   bool _checkingReadability = false;
+  // _canRead is the final verdict used only in the network-probe fallback path.
   bool _canRead = true;
   String? _error;
+
+  /// The resolved ebook access level. Updated whenever [_book] changes.
+  EbookAccess get _ebookAccess => _book?.ebookAccess ?? EbookAccess.unknown;
+
+  /// Whether the book can be read in-app (public domain).
+  bool get _readEnabled =>
+      _ebookAccess == EbookAccess.publicDomain ||
+      (_ebookAccess == EbookAccess.unknown && _canRead);
+
+  /// Whether we are still determining access (spinner state).
+  bool get _accessPending =>
+      _ebookAccess == EbookAccess.unknown && _checkingReadability;
 
   @override
   void initState() {
     super.initState();
     _book = widget.initialBook;
     _loading = _book == null;
-    if (_book != null) {
+    if (_book != null && _ebookAccess == EbookAccess.unknown) {
       _checkReadability(_book!);
     }
     _load();
@@ -53,7 +68,10 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
           _loading = false;
           _error = null;
         });
-        _checkReadability(book);
+        // Only run network probe when access is still unknown after enrichment.
+        if (_ebookAccess == EbookAccess.unknown) {
+          _checkReadability(book);
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -68,7 +86,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   }
 
   Future<void> _download(LibraryProvider lib) async {
-    if (_book == null || !_canRead) return;
+    if (_book == null || !_readEnabled) return;
     setState(() => _downloading = true);
     try {
       final text = await _service.fetchBookText(_book!);
@@ -110,7 +128,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     final inWishlist = lib.isInWishlist(book.id);
     final inReadLater = lib.isInReadLater(book.id);
     final downloaded = lib.isDownloaded(book.id);
-    final readDisabled = _checkingReadability || !_canRead;
+    final readDisabled = _accessPending || !_readEnabled;
 
     return Scaffold(
       appBar: AppBar(
@@ -176,7 +194,8 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                       ]),
                       const SizedBox(height: 10),
                       _AvailabilityBadge(
-                        checkingReadability: _checkingReadability,
+                        ebookAccess: _ebookAccess,
+                        checkingReadability: _accessPending,
                         canRead: _canRead,
                       ),
                     ],
@@ -193,11 +212,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                     : () => context.push('/reader/${book.id}', extra: book),
                 style: FilledButton.styleFrom(backgroundColor: cs.primary),
                 child: Text(
-                  _checkingReadability
-                      ? 'Checking availability...'
-                      : _canRead
-                          ? 'Read'
-                          : 'Text not available',
+                  _readButtonLabel,
                   style: const TextStyle(fontSize: 16),
                 ),
               ),
@@ -217,40 +232,15 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                     : Text(
                         downloaded
                             ? 'Saved Offline'
-                            : _canRead
+                            : _readEnabled
                                 ? 'Save Offline'
-                                : 'No text source',
+                                : 'Unavailable Offline',
                       ),
               ),
             ).animate(delay: 160.ms).fadeIn(duration: 280.ms).slideY(begin: 0.06, end: 0),
-            if (!_checkingReadability && !_canRead) ...[
+            if (!_accessPending && !_readEnabled) ...[
               const SizedBox(height: 8),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: cs.errorContainer,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    PhosphorIcon(PhosphorIconsRegular.info,
-                        size: 16, color: cs.onErrorContainer),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'This title is not available as readable text in Open Library. '
-                        'Only text-based books are supported by the reader.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: cs.onErrorContainer,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              _AccessInfoBanner(ebookAccess: _ebookAccess),
             ],
             const SizedBox(height: 24),
             Text('Subjects',
@@ -280,6 +270,22 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         ),
       ),
     );
+  }
+
+  String get _readButtonLabel {
+    if (_accessPending) return 'Checking availability...';
+    switch (_ebookAccess) {
+      case EbookAccess.publicDomain:
+        return 'Read';
+      case EbookAccess.borrowable:
+        return 'Borrowing Not Supported';
+      case EbookAccess.printDisabled:
+        return 'Restricted Access';
+      case EbookAccess.noEbook:
+        return 'No Ebook Available';
+      case EbookAccess.unknown:
+        return _canRead ? 'Read' : 'Text Not Available';
+    }
   }
 
   Widget _buildSkeleton() {
@@ -313,10 +319,12 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
 }
 
 class _AvailabilityBadge extends StatelessWidget {
+  final EbookAccess ebookAccess;
   final bool checkingReadability;
   final bool canRead;
 
   const _AvailabilityBadge({
+    required this.ebookAccess,
     required this.checkingReadability,
     required this.canRead,
   });
@@ -324,6 +332,7 @@ class _AvailabilityBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+
     if (checkingReadability) {
       return Row(
         mainAxisSize: MainAxisSize.min,
@@ -336,59 +345,151 @@ class _AvailabilityBadge extends StatelessWidget {
           ),
           const SizedBox(width: 6),
           Text(
-            'Checking availability…',
+            'Checking availability...',
             style: TextStyle(
                 fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6)),
           ),
         ],
       );
     }
-    if (canRead) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: cs.primaryContainer,
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            PhosphorIcon(PhosphorIconsRegular.bookOpen,
-                size: 13, color: cs.onPrimaryContainer),
-            const SizedBox(width: 4),
-            Text(
-              'Free to read',
-              style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: cs.onPrimaryContainer),
-            ),
-          ],
-        ),
-      );
+
+    switch (ebookAccess) {
+      case EbookAccess.publicDomain:
+        return _badge(
+          context,
+          icon: PhosphorIconsRegular.bookOpen,
+          label: 'Free to read',
+          bgColor: cs.primaryContainer,
+          fgColor: cs.onPrimaryContainer,
+        );
+      case EbookAccess.borrowable:
+        return _badge(
+          context,
+          icon: PhosphorIconsRegular.clockCounterClockwise,
+          label: 'Borrowable only',
+          bgColor: cs.secondaryContainer,
+          fgColor: cs.onSecondaryContainer,
+        );
+      case EbookAccess.printDisabled:
+        return _badge(
+          context,
+          icon: PhosphorIconsRegular.prohibit,
+          label: 'Print-disabled only',
+          bgColor: cs.tertiaryContainer,
+          fgColor: cs.onTertiaryContainer,
+        );
+      case EbookAccess.noEbook:
+        return _badge(
+          context,
+          icon: PhosphorIconsRegular.lock,
+          label: 'No ebook',
+          bgColor: cs.errorContainer,
+          fgColor: cs.onErrorContainer,
+        );
+      case EbookAccess.unknown:
+        // Fallback path: use the network-probe result.
+        if (canRead) {
+          return _badge(
+            context,
+            icon: PhosphorIconsRegular.bookOpen,
+            label: 'Free to read',
+            bgColor: cs.primaryContainer,
+            fgColor: cs.onPrimaryContainer,
+          );
+        }
+        return _badge(
+          context,
+          icon: PhosphorIconsRegular.lock,
+          label: 'Not freely available',
+          bgColor: cs.errorContainer,
+          fgColor: cs.onErrorContainer,
+        );
     }
+  }
+
+  Widget _badge(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    required Color bgColor,
+    required Color fgColor,
+  }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: cs.errorContainer,
+        color: bgColor,
         borderRadius: BorderRadius.circular(20),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          PhosphorIcon(PhosphorIconsRegular.lock,
-              size: 13, color: cs.onErrorContainer),
+          PhosphorIcon(icon, size: 13, color: fgColor),
           const SizedBox(width: 4),
           Text(
-            'Not freely available',
+            label,
             style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
-                color: cs.onErrorContainer),
+                color: fgColor),
           ),
         ],
       ),
     );
+  }
+}
+
+/// Info banner shown below the action buttons when the book is not freely readable.
+class _AccessInfoBanner extends StatelessWidget {
+  final EbookAccess ebookAccess;
+  const _AccessInfoBanner({required this.ebookAccess});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final message = _messageFor(ebookAccess);
+    if (message == null) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: cs.errorContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          PhosphorIcon(PhosphorIconsRegular.info,
+              size: 16, color: cs.onErrorContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                fontSize: 12,
+                color: cs.onErrorContainer,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String? _messageFor(EbookAccess access) {
+    switch (access) {
+      case EbookAccess.borrowable:
+        return 'This title is available for controlled digital lending only. '
+            'In-app reading requires a public domain edition.';
+      case EbookAccess.printDisabled:
+        return 'Access to this title is restricted to users with print disabilities '
+            'and cannot be read in-app.';
+      case EbookAccess.noEbook:
+        return 'No ebook edition is available through Open Library for this title.';
+      case EbookAccess.unknown:
+        return 'This title is not available as readable text in Open Library. '
+            'Only text-based books are supported by the reader.';
+      case EbookAccess.publicDomain:
+        return null;
+    }
   }
 }
 
