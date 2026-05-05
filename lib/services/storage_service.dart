@@ -37,8 +37,8 @@ class StorageService {
   static const _suggestionsCacheKey = '${_prefix}suggestionsCache';
 
   static const _maxReadingHistorySize = 50;
-  // Shelf cache expires after 24 hours.
-  static const _shelfCacheMaxAgeMs = 86400000;
+  // Shelf cache expires after 24 hours (expressed in milliseconds).
+  static const _shelfCacheMaxAgeMs = 24 * 60 * 60 * 1000;
 
   Future<SharedPreferences> get _prefs => SharedPreferences.getInstance();
 

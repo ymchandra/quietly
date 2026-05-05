@@ -310,7 +310,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
             return _buildSuggestionShelf(
                 suggestionGroups[i - 1], suggestions);
           }
-          // Offset index for genre shelves.
+          // Offset the raw ListView index to get the _topics index.
+          // When showing suggestions: offset = 1 (header) + N (suggestion shelves).
+          // When showing loading skeleton: offset = 2 (header + skeleton shelf).
           i -= (showSuggestions ? 1 + suggestionGroups.length : 2);
         }
 

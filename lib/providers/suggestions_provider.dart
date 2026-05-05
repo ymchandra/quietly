@@ -76,9 +76,10 @@ class SuggestionsProvider extends ChangeNotifier {
         final displayName = _formatAuthorName(author);
         final resp = await _service.fetchBooks(search: displayName, page: 1);
         // Filter to books that actually feature this author.
-        final books = resp.results.where((b) => b.authors.any((a) =>
-            a.name.toLowerCase().contains(author.split(',').first.toLowerCase()) ||
-            displayName.toLowerCase().contains(a.name.split(',').first.toLowerCase()))).take(10).toList();
+        final books = resp.results
+            .where((b) => _bookMatchesAuthor(b, author, displayName))
+            .take(10)
+            .toList();
         if (books.isNotEmpty) {
           newGroups.add(SuggestionGroup(
             label: 'More by $displayName',
@@ -170,5 +171,16 @@ class SuggestionsProvider extends ChangeNotifier {
   static String _formatAuthorName(String raw) {
     final parts = raw.split(',');
     return parts.reversed.map((p) => p.trim()).join(' ').trim();
+  }
+
+  /// Returns true when any of [book]'s authors match [rawName] (stored format,
+  /// e.g. "Austen, Jane") or [displayName] (human-readable, e.g. "Jane Austen").
+  static bool _bookMatchesAuthor(Book book, String rawName, String displayName) {
+    final lastName = rawName.split(',').first.toLowerCase();
+    final displayLower = displayName.toLowerCase();
+    return book.authors.any((a) {
+      final aLower = a.name.toLowerCase();
+      return aLower.contains(lastName) || displayLower.contains(a.name.split(',').first.toLowerCase());
+    });
   }
 }
