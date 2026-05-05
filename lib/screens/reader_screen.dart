@@ -12,6 +12,7 @@ import '../models/book.dart';
 import '../models/reader_settings.dart';
 import '../providers/library_provider.dart';
 import '../providers/reader_settings_provider.dart';
+import '../providers/suggestions_provider.dart';
 import '../services/openlibrary_service.dart';
 import '../services/storage_service.dart';
 import '../widgets/reader_controls.dart';
@@ -127,6 +128,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
           _loading = false;
         });
         _buildPages();
+        // Record the reading event so Discover can refine suggestions.
+        context.read<SuggestionsProvider>().recordBookOpened(book);
       }
     } catch (e) {
       _recordDebug(

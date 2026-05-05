@@ -6,8 +6,10 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:provider/provider.dart';
 import '../models/book.dart';
+import '../providers/suggestions_provider.dart';
 import '../providers/user_profile_provider.dart';
 import '../services/openlibrary_service.dart';
+import '../services/storage_service.dart';
 import '../widgets/book_card.dart';
 import '../widgets/search_bar_widget.dart';
 import '../widgets/skeleton_widget.dart';
@@ -32,6 +34,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   static const _initialTopicBatch = 2;
   static const _shelfHeight = 252.0;
   final _service = OpenLibraryService();
+  final _storage = StorageService();
   final Map<String, List<Book>> _shelves = {};
   final Map<String, bool> _loading = {};
   final Set<String> _requestedTopics = <String>{};
@@ -101,10 +104,21 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   }
 
   Future<bool> _loadShelf(String topic) async {
-    setState(() {
-      _loading[topic] = true;
-      _shelfErrors.remove(topic);
-    });
+    // Serve from cache immediately if available, then refresh in background.
+    final cached = await _storage.getShelfCache(topic);
+    if (cached != null && cached.isNotEmpty && mounted) {
+      setState(() {
+        _shelves[topic] = cached.take(_previewCount).toList();
+        _loading[topic] = false;
+        _shelfErrors.remove(topic);
+      });
+    } else {
+      setState(() {
+        _loading[topic] = true;
+        _shelfErrors.remove(topic);
+      });
+    }
+
     try {
       final resp = await _service.fetchBooks(
         topic: topic,
@@ -114,20 +128,26 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         },
       );
       if (mounted) {
+        final books = resp.results.take(_previewCount).toList();
         setState(() {
-          _shelves[topic] = resp.results.take(_previewCount).toList();
+          _shelves[topic] = books;
+          _loading[topic] = false;
         });
+        // Persist updated cache in background.
+        _storage.saveShelfCache(topic, books);
       }
       return true;
     } catch (_) {
       if (mounted) {
         setState(() {
-          _shelfErrors[topic] = 'Could not load this shelf.';
+          _loading[topic] = false;
+          // Only show error banner when there is no cached data to display.
+          if ((_shelves[topic] ?? []).isEmpty) {
+            _shelfErrors[topic] = 'Could not load this shelf.';
+          }
         });
       }
-      return false;
-    } finally {
-      if (mounted) setState(() => _loading[topic] = false);
+      return (_shelves[topic] ?? []).isNotEmpty;
     }
   }
 
@@ -260,11 +280,43 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       );
     }
 
+    final suggestions = context.watch<SuggestionsProvider>();
+    final suggestionGroups = suggestions.groups;
+    final showSuggestions =
+        suggestions.hasHistory && suggestionGroups.isNotEmpty;
+    final showSuggestionsLoading =
+        suggestions.hasHistory && suggestions.isLoading && suggestionGroups.isEmpty;
+
     return ListView.builder(
       padding: const EdgeInsets.only(bottom: 16),
       physics: const AlwaysScrollableScrollPhysics(),
-      itemCount: _topics.length,
+      // Extra items for the "For You" header + suggestion shelves (or shimmer).
+      itemCount: _topics.length +
+          (showSuggestions
+              ? 1 + suggestionGroups.length
+              : showSuggestionsLoading
+                  ? 2
+                  : 0),
       itemBuilder: (context, i) {
+        // ── For You section ────────────────────────────────────────────────
+        if (showSuggestions || showSuggestionsLoading) {
+          if (i == 0) {
+            return _buildForYouHeader();
+          }
+          if (showSuggestionsLoading && i == 1) {
+            return _buildSuggestionShelfSkeleton();
+          }
+          if (showSuggestions && i <= suggestionGroups.length) {
+            return _buildSuggestionShelf(
+                suggestionGroups[i - 1], suggestions);
+          }
+          // Offset the raw ListView index to get the _topics index.
+          // When showing suggestions: offset = 1 (header) + N (suggestion shelves).
+          // When showing loading skeleton: offset = 2 (header + skeleton shelf).
+          i -= (showSuggestions ? 1 + suggestionGroups.length : 2);
+        }
+
+        // ── Genre shelves ──────────────────────────────────────────────────
         final t = _topics[i];
         final topic = t['topic']!;
         final label = t['label']!;
@@ -356,6 +408,133 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           ],
         );
       },
+    );
+  }
+
+  Widget _buildForYouHeader() {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
+      child: Row(
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: cs.primary.withValues(alpha: 0.14),
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: PhosphorIcon(
+                PhosphorIconsRegular.sparkle,
+                size: 18,
+                color: cs.primary,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'For You',
+                style: GoogleFonts.lora(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: cs.onSurface,
+                ),
+              ),
+              Text(
+                'Based on your reading',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: cs.onSurface.withValues(alpha: 0.55),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    )
+        .animate()
+        .fadeIn(duration: 350.ms)
+        .slideY(begin: -0.06, end: 0, duration: 350.ms, curve: Curves.easeOut);
+  }
+
+  Widget _buildSuggestionShelf(
+      SuggestionGroup group, SuggestionsProvider suggestions) {
+    final books = suggestions.booksForGroup(group);
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 12, 8),
+          child: Row(
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: cs.primary.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    PhosphorIcon(
+                      group.queryType == 'author'
+                          ? PhosphorIconsRegular.user
+                          : PhosphorIconsRegular.books,
+                      size: 12,
+                      color: cs.primary,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      group.label,
+                      style: GoogleFonts.lora(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: cs.onSurface,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: _shelfHeight,
+          child: books.isEmpty
+              ? _shelfSkeleton()
+              : ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: books.length,
+                  itemBuilder: (ctx, j) => Padding(
+                    padding: const EdgeInsets.only(right: 12),
+                    child: BookCard(book: books[j], animationIndex: j),
+                  ),
+                ),
+        ),
+      ],
+    )
+        .animate()
+        .fadeIn(duration: 300.ms, delay: 80.ms)
+        .slideY(begin: 0.05, end: 0, duration: 300.ms, curve: Curves.easeOut);
+  }
+
+  Widget _buildSuggestionShelfSkeleton() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 12, 8),
+          child: SkeletonWidget(width: 160, height: 22, borderRadius: 20),
+        ),
+        SizedBox(height: _shelfHeight, child: _shelfSkeleton()),
+      ],
     );
   }
 
