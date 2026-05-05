@@ -853,11 +853,12 @@ class OpenLibraryService {
 
   String _decodeEntities(String text) {
     return text
-        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&nbsp;', '\u00A0')
         .replaceAll('&amp;', '&')
         .replaceAll('&lt;', '<')
         .replaceAll('&gt;', '>')
         .replaceAll('&quot;', '"')
+        .replaceAll('&apos;', "'")
         .replaceAll('&#39;', "'")
         .replaceAll('&mdash;', '\u2014')
         .replaceAll('&ndash;', '\u2013')
@@ -866,14 +867,25 @@ class OpenLibraryService {
         .replaceAll('&lsquo;', '\u2018')
         .replaceAll('&rdquo;', '\u201D')
         .replaceAll('&ldquo;', '\u201C')
+        .replaceAll('&thinsp;', '\u2009')
+        .replaceAll('&ensp;', '\u2002')
+        .replaceAll('&emsp;', '\u2003')
+        // Hex numeric character references &#xNN; or &#XNN;
+        .replaceAllMapped(RegExp(r'&#[xX]([0-9a-fA-F]+);'), (m) {
+          final code = int.tryParse(m.group(1)!, radix: 16);
+          if (code != null) return String.fromCharCodes([code]);
+          return m.group(0)!;
+        })
+        // Decimal numeric character references &#NN;
         .replaceAllMapped(RegExp(r'&#(\d+);'), (m) {
           final code = int.tryParse(m.group(1)!);
-          if (code != null) return String.fromCharCode(code);
+          if (code != null) return String.fromCharCodes([code]);
           return m.group(0)!;
         });
   }
 
   String cleanGutenbergText(String text) {
+    // Strip Project Gutenberg header and footer.
     final startRegex = RegExp(
         r'\*{3}\s*START OF (THE|THIS) PROJECT GUTENBERG[^\n]*\n',
         caseSensitive: false);
@@ -888,6 +900,41 @@ class OpenLibraryService {
     if (endMatch != null) {
       text = text.substring(0, endMatch.start);
     }
+
+    // Normalize Windows / old-Mac line endings to Unix newlines.
+    text = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+
+    // Replace form-feed characters (0x0C) — used as page separators in DJVU /
+    // archive.org text layers — with a paragraph break so they don't appear
+    // as visible "gibberish" glyphs.
+    text = text.replaceAll('\f', '\n\n');
+
+    // Remove UTF-8 replacement characters that arise from malformed byte
+    // sequences decoded with allowMalformed:true.
+    text = text.replaceAll('\uFFFD', '');
+
+    // Strip remaining ASCII control characters (except newlines and tabs).
+    text = text.replaceAll(RegExp(r'[\x00-\x08\x0B\x0E-\x1F\x7F]'), '');
+
+    // Convert tabs to a single space.
+    text = text.replaceAll('\t', ' ');
+
+    // Join hard-wrapped prose lines.  Project Gutenberg and archive.org plain-
+    // text files wrap long lines at ~72 characters using single newlines, while
+    // true paragraph breaks are marked with two or more newlines.  Collapsing
+    // each single newline to a space reunites split sentences so the Flutter
+    // Text widget can re-flow them at the correct screen width.
+    final paragraphBreak = RegExp(r'\n{2,}');
+    final paragraphs = text.split(paragraphBreak);
+    text = paragraphs
+        .map((para) => para
+            .replaceAll('\n', ' ')
+            .replaceAll(RegExp(r' {2,}'), ' ')
+            .trim())
+        .where((para) => para.isNotEmpty)
+        .join('\n\n');
+
+    // Collapse any leftover runs of 4+ blank lines to at most three.
     text = text.replaceAll(RegExp(r'\n{4,}'), '\n\n\n');
     return text.trim();
   }
