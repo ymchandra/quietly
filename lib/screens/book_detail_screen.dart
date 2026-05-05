@@ -273,7 +273,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   }
 
   String get _readButtonLabel {
-    if (_accessPending) return 'Checking availability…';
+    if (_accessPending) return 'Checking availability...';
     switch (_ebookAccess) {
       case EbookAccess.publicDomain:
         return 'Read';
@@ -345,7 +345,7 @@ class _AvailabilityBadge extends StatelessWidget {
           ),
           const SizedBox(width: 6),
           Text(
-            'Checking availability…',
+            'Checking availability...',
             style: TextStyle(
                 fontSize: 12, color: cs.onSurface.withValues(alpha: 0.6)),
           ),
