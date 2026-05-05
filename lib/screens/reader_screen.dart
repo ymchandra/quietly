@@ -54,6 +54,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
   static const int _pageChunkSize = 10;
   static const double _pageFillFactor = 0.85;
   static const int _minCharsPerPage = 300;
+  // Padding applied to each text page — must stay in sync with the Container
+  // padding used in the page builder below so the layout calculation is accurate.
+  static const double _pageHorizontalPadding = 24.0;
+  static const double _pageTopPadding = 64.0;
+  static const double _pageBottomPadding = 88.0;
 
   @override
   void initState() {
@@ -189,8 +194,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
         context.read<ReaderSettingsProvider>().forBook(widget.bookId);
     final allPages = _splitPages(
       text: content.text!,
-      textWidth: size.width - 40,
-      textHeight: size.height - 120,
+      textWidth: size.width - _pageHorizontalPadding * 2,
+      textHeight: size.height - _pageTopPadding - _pageBottomPadding,
       fontSize: settings.fontSize,
       lineHeightFactor: settings.lineHeightValue,
     );
@@ -580,9 +585,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
                           : Container(
                               color: bgColor,
                               child: Padding(
-                                padding:
-                                    const EdgeInsets.fromLTRB(20, 60, 20, 80),
-                                child: Text(_pages[i], style: textStyle),
+                                padding: const EdgeInsets.fromLTRB(
+                                  _pageHorizontalPadding,
+                                  _pageTopPadding,
+                                  _pageHorizontalPadding,
+                                  _pageBottomPadding,
+                                ),
+                                child: Text(
+                                  _pages[i],
+                                  style: textStyle,
+                                  textAlign: TextAlign.justify,
+                                ),
                               ),
                             ),
                     ),
