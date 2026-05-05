@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:provider/provider.dart';
 import '../models/book.dart';
+import '../models/reading_history.dart';
 import '../providers/suggestions_provider.dart';
 import '../providers/user_profile_provider.dart';
 import '../services/openlibrary_service.dart';
