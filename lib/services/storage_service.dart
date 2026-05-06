@@ -174,12 +174,44 @@ class StorageService {
 
   Future<void> addReadingEvent(ReadingEvent event) async {
     final existing = await getReadingHistory();
-    // Deduplicate: move existing entry for the same book to the front.
+    // Carry over accumulated stats from any previous entry for the same book
+    // so pages read and time are not lost when the user reopens a book.
+    final prevList = existing.where((e) => e.bookId == event.bookId);
+    final prev = prevList.isNotEmpty ? prevList.first : null;
+    final carried = prev != null
+        ? event.copyWith(
+            pagesRead: event.pagesRead + prev.pagesRead,
+            sessionSeconds: event.sessionSeconds + prev.sessionSeconds,
+          )
+        : event;
+    // Deduplicate: move entry for the same book to the front.
     final deduped = existing.where((e) => e.bookId != event.bookId).toList();
-    final updated = [event, ...deduped].take(_maxReadingHistorySize).toList();
+    final updated = [carried, ...deduped].take(_maxReadingHistorySize).toList();
     final prefs = await _prefs;
     await prefs.setString(
         _readingHistoryKey, json.encode(updated.map((e) => e.toJson()).toList()));
+  }
+
+  /// Adds [addPages] and [addSeconds] to the most-recent [ReadingEvent] for
+  /// [bookId]. Does nothing if no event exists for the book.
+  Future<void> updateReadingEventStats(
+    int bookId, {
+    required int addPages,
+    required int addSeconds,
+  }) async {
+    if (addPages <= 0 && addSeconds <= 0) return;
+    final existing = await getReadingHistory();
+    final idx = existing.indexWhere((e) => e.bookId == bookId);
+    if (idx == -1) return;
+    final old = existing[idx];
+    existing[idx] = old.copyWith(
+      pagesRead: old.pagesRead + addPages,
+      sessionSeconds: old.sessionSeconds + addSeconds,
+    );
+    final prefs = await _prefs;
+    await prefs.setString(
+        _readingHistoryKey,
+        json.encode(existing.map((e) => e.toJson()).toList()));
   }
 
   // ── Shelf cache ─────────────────────────────────────────────────────────────

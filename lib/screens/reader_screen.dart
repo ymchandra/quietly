@@ -50,10 +50,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Timer? _hideTimer;
   Size? _lastSize;
 
+  /// Session tracking — set when content finishes loading.
+  int? _sessionStartMs;
+  int _sessionStartPage = 0;
+  SuggestionsProvider? _suggestionsProvider;
+
   static const double _charWidthRatio = 0.52;
   static const int _pageChunkSize = 10;
   static const double _pageFillFactor = 0.85;
   static const int _minCharsPerPage = 300;
+  // Upper bound on pages counted per session to guard against stale state.
+  static const int _maxPagesPerSession = 999999;
   // Padding applied to each text page — must stay in sync with the Container
   // padding used in the page builder below so the layout calculation is accurate.
   static const double _pageHorizontalPadding = 24.0;
@@ -73,6 +80,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _hideTimer?.cancel();
     _pageController.dispose();
+    // Persist session stats (fire-and-forget; context is no longer available).
+    final sp = _suggestionsProvider;
+    if (sp != null && _sessionStartMs != null) {
+      final elapsed =
+          (DateTime.now().millisecondsSinceEpoch - _sessionStartMs!) ~/ 1000;
+      final pages = (_currentPage - _sessionStartPage).clamp(0, _maxPagesPerSession);
+      sp.recordSessionStats(
+        widget.bookId,
+        pagesRead: pages,
+        sessionSeconds: elapsed,
+      );
+    }
     super.dispose();
   }
 
@@ -104,6 +123,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
             _loading = false;
           });
           _buildPages();
+          _suggestionsProvider = context.read<SuggestionsProvider>();
+          _sessionStartMs = DateTime.now().millisecondsSinceEpoch;
+          _sessionStartPage = _currentPage;
         }
         return;
       }
@@ -134,7 +156,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
         });
         _buildPages();
         // Record the reading event so Discover can refine suggestions.
-        context.read<SuggestionsProvider>().recordBookOpened(book);
+        final sp = context.read<SuggestionsProvider>();
+        sp.recordBookOpened(book);
+        _suggestionsProvider = sp;
+        _sessionStartMs = DateTime.now().millisecondsSinceEpoch;
+        _sessionStartPage = _currentPage;
       }
     } catch (e) {
       _recordDebug(

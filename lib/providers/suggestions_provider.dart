@@ -46,6 +46,23 @@ class SuggestionsProvider extends ChangeNotifier {
     }
   }
 
+  /// Updates the stored stats for [bookId] after a reading session ends.
+  /// [pagesRead] is the number of pages turned this session; [sessionSeconds]
+  /// is the elapsed time in seconds.
+  Future<void> recordSessionStats(
+    int bookId, {
+    required int pagesRead,
+    required int sessionSeconds,
+  }) async {
+    await _storage.updateReadingEventStats(
+      bookId,
+      addPages: pagesRead,
+      addSeconds: sessionSeconds,
+    );
+    _history = await _storage.getReadingHistory();
+    notifyListeners();
+  }
+
   Future<void> _refreshSuggestions() async {
     if (_history.isEmpty) return;
     _loading = true;

@@ -5,6 +5,10 @@ class ReadingEvent {
   final List<String> subjects;
   final List<String> bookshelves;
   final int openedAt;
+  /// Cumulative pages turned across all sessions for this book.
+  final int pagesRead;
+  /// Cumulative seconds spent reading this book across all sessions.
+  final int sessionSeconds;
 
   const ReadingEvent({
     required this.bookId,
@@ -13,7 +17,24 @@ class ReadingEvent {
     required this.subjects,
     required this.bookshelves,
     required this.openedAt,
+    this.pagesRead = 0,
+    this.sessionSeconds = 0,
   });
+
+  ReadingEvent copyWith({
+    int? pagesRead,
+    int? sessionSeconds,
+  }) =>
+      ReadingEvent(
+        bookId: bookId,
+        bookTitle: bookTitle,
+        authorNames: authorNames,
+        subjects: subjects,
+        bookshelves: bookshelves,
+        openedAt: openedAt,
+        pagesRead: pagesRead ?? this.pagesRead,
+        sessionSeconds: sessionSeconds ?? this.sessionSeconds,
+      );
 
   Map<String, dynamic> toJson() => {
         'bookId': bookId,
@@ -22,6 +43,8 @@ class ReadingEvent {
         'subjects': subjects,
         'bookshelves': bookshelves,
         'openedAt': openedAt,
+        'pagesRead': pagesRead,
+        'sessionSeconds': sessionSeconds,
       };
 
   factory ReadingEvent.fromJson(Map<String, dynamic> json) => ReadingEvent(
@@ -31,6 +54,8 @@ class ReadingEvent {
         subjects: List<String>.from(json['subjects'] as List? ?? []),
         bookshelves: List<String>.from(json['bookshelves'] as List? ?? []),
         openedAt: json['openedAt'] as int,
+        pagesRead: json['pagesRead'] as int? ?? 0,
+        sessionSeconds: json['sessionSeconds'] as int? ?? 0,
       );
 }
 

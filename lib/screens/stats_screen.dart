@@ -20,6 +20,10 @@ class StatsScreen extends StatelessWidget {
     final booksReading = lib.reading.length;
     final booksSaved = lib.wishlist.length + lib.readLater.length;
     final uniqueOpened = history.map((e) => e.bookId).toSet().length;
+    final totalPages =
+        history.fold<int>(0, (sum, e) => sum + e.pagesRead);
+    final totalSeconds =
+        history.fold<int>(0, (sum, e) => sum + e.sessionSeconds);
 
     final topGenres = _topGenres(history, 12);
     final topAuthors = _topAuthors(history, 8);
@@ -41,6 +45,8 @@ class StatsScreen extends StatelessWidget {
               booksReading: booksReading,
               booksSaved: booksSaved,
               uniqueOpened: uniqueOpened,
+              totalPages: totalPages,
+              totalSeconds: totalSeconds,
               topGenres: topGenres,
               topAuthors: topAuthors,
               history: history,
@@ -55,6 +61,8 @@ class StatsScreen extends StatelessWidget {
     required int booksReading,
     required int booksSaved,
     required int uniqueOpened,
+    required int totalPages,
+    required int totalSeconds,
     required List<MapEntry<String, int>> topGenres,
     required List<MapEntry<String, int>> topAuthors,
     required List<ReadingEvent> history,
@@ -92,6 +100,18 @@ class StatsScreen extends StatelessWidget {
               label: 'Opened',
               value: '$uniqueOpened',
               accent: const Color(0xFFC08A3A),
+            ),
+            _StatItem(
+              icon: PhosphorIconsRegular.fileText,
+              label: 'Pages Read',
+              value: '$totalPages',
+              accent: const Color(0xFF4A90D9),
+            ),
+            _StatItem(
+              icon: PhosphorIconsRegular.clock,
+              label: 'Time Spent',
+              value: _formatDuration(totalSeconds),
+              accent: const Color(0xFFD96A4A),
             ),
           ],
         ),
@@ -236,6 +256,17 @@ class StatsScreen extends StatelessWidget {
   static String _capitalize(String s) {
     if (s.isEmpty) return s;
     return s[0].toUpperCase() + s.substring(1);
+  }
+
+  /// Converts [seconds] into a compact human-readable duration string.
+  static String _formatDuration(int seconds) {
+    if (seconds <= 0) return '0m';
+    if (seconds < 60) return '<1m';
+    final h = seconds ~/ 3600;
+    final m = (seconds % 3600) ~/ 60;
+    if (h == 0) return '${m}m';
+    if (m == 0) return '${h}h';
+    return '${h}h ${m}m';
   }
 }
 
