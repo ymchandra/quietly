@@ -804,7 +804,7 @@ class _RelatedBooksSection extends StatelessWidget {
           height: _shelfHeight,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 0),
+            padding: EdgeInsets.zero,
             itemCount: group.books.length,
             itemBuilder: (ctx, j) => Padding(
               padding: const EdgeInsets.only(right: 12),
