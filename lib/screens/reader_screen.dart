@@ -59,6 +59,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   static const int _pageChunkSize = 10;
   static const double _pageFillFactor = 0.85;
   static const int _minCharsPerPage = 300;
+  // Upper bound on pages counted per session to guard against stale state.
+  static const int _maxPagesPerSession = 999999;
   // Padding applied to each text page — must stay in sync with the Container
   // padding used in the page builder below so the layout calculation is accurate.
   static const double _pageHorizontalPadding = 24.0;
@@ -83,7 +85,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (sp != null && _sessionStartMs != null) {
       final elapsed =
           (DateTime.now().millisecondsSinceEpoch - _sessionStartMs!) ~/ 1000;
-      final pages = (_currentPage - _sessionStartPage).clamp(0, 999999);
+      final pages = (_currentPage - _sessionStartPage).clamp(0, _maxPagesPerSession);
       sp.recordSessionStats(
         widget.bookId,
         pagesRead: pages,
