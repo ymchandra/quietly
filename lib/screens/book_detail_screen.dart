@@ -9,7 +9,20 @@ import '../models/book.dart';
 import '../providers/library_provider.dart';
 import '../services/openlibrary_service.dart';
 import '../services/storage_service.dart';
+import '../widgets/book_card.dart';
 import '../widgets/skeleton_widget.dart';
+
+/// A group of related books with a display label.
+class _RelatedGroup {
+  final String label;
+  final String queryType; // 'author' or 'subject'
+  final List<Book> books;
+  const _RelatedGroup({
+    required this.label,
+    required this.queryType,
+    required this.books,
+  });
+}
 
 class BookDetailScreen extends StatefulWidget {
   final int bookId;
@@ -35,6 +48,10 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   // _canRead is the final verdict used only in the network-probe fallback path.
   bool _canRead = true;
   String? _error;
+
+  // Related books state
+  List<_RelatedGroup> _relatedGroups = [];
+  bool _relatedLoading = false;
 
   /// The resolved ebook access level. Updated whenever [_book] changes.
   EbookAccess get _ebookAccess => _book?.ebookAccess ?? EbookAccess.unknown;
@@ -72,6 +89,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         if (_ebookAccess == EbookAccess.unknown) {
           _checkReadability(book);
         }
+        _loadRelatedBooks(book);
       }
     } catch (e) {
       if (mounted) {
@@ -83,6 +101,99 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         });
       }
     }
+  }
+
+  Future<void> _loadRelatedBooks(Book book) async {
+    if (!mounted) return;
+    setState(() => _relatedLoading = true);
+
+    final groups = <_RelatedGroup>[];
+
+    // --- Author group ---
+    if (book.authors.isNotEmpty) {
+      final rawName = book.authors.first.name;
+      final displayName = _formatAuthorName(rawName);
+      try {
+        final resp = await _service.fetchBooks(search: displayName, page: 1);
+        final books = resp.results
+            .where((b) => b.id != book.id && _bookMatchesAuthor(b, rawName, displayName))
+            .take(10)
+            .toList();
+        if (books.isNotEmpty) {
+          groups.add(_RelatedGroup(
+            label: 'More by $displayName',
+            queryType: 'author',
+            books: books,
+          ));
+        }
+      } catch (_) {}
+    }
+
+    // --- Subject group ---
+    final subject = _pickSubject(book);
+    if (subject != null) {
+      try {
+        final resp = await _service.fetchBooks(topic: subject, page: 1);
+        final books = resp.results
+            .where((b) => b.id != book.id)
+            .take(10)
+            .toList();
+        if (books.isNotEmpty) {
+          groups.add(_RelatedGroup(
+            label: 'More ${_capitalize(subject)}',
+            queryType: 'subject',
+            books: books,
+          ));
+        }
+      } catch (_) {}
+    }
+
+    if (mounted) {
+      setState(() {
+        _relatedGroups = groups;
+        _relatedLoading = false;
+      });
+    }
+  }
+
+  // ── Related-books helpers ─────────────────────────────────────────────────
+
+  static String _formatAuthorName(String raw) {
+    final parts = raw.split(',');
+    return parts.reversed.map((p) => p.trim()).join(' ').trim();
+  }
+
+  static bool _bookMatchesAuthor(Book book, String rawName, String displayName) {
+    final lastName = rawName.split(',').first.toLowerCase();
+    final displayLower = displayName.toLowerCase();
+    return book.authors.any((a) {
+      final aLower = a.name.toLowerCase();
+      return aLower.contains(lastName) ||
+          displayLower.contains(a.name.split(',').first.toLowerCase());
+    });
+  }
+
+  /// Pick the most representative subject from the book, skipping overly broad terms.
+  static String? _pickSubject(Book book) {
+    const skip = {
+      'fiction',
+      'nonfiction',
+      'non-fiction',
+      'literature',
+      'books',
+      'readable',
+    };
+    for (final raw in [...book.subjects, ...book.bookshelves]) {
+      final lower = raw.toLowerCase().trim();
+      final first = lower.split(RegExp(r'[&/]|--')).first.trim();
+      if (first.length >= 3 && !skip.contains(first)) return first;
+    }
+    return null;
+  }
+
+  static String _capitalize(String s) {
+    if (s.isEmpty) return s;
+    return s[0].toUpperCase() + s.substring(1);
   }
 
   Future<void> _download(LibraryProvider lib) async {
@@ -266,6 +377,11 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
               )
             else
               _ChipWrap(items: book.bookshelves),
+            const SizedBox(height: 32),
+            _RelatedBooksSection(
+              loading: _relatedLoading,
+              groups: _relatedGroups,
+            ),
           ],
         ),
       ),
@@ -560,6 +676,179 @@ class _ChipWrap extends StatelessWidget {
                 materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ))
           .toList(),
+    );
+  }
+}
+
+/// Displays zero or more horizontal shelves of books related to the current
+/// book (by author and/or subject). While fetching, shows skeleton shelves.
+class _RelatedBooksSection extends StatelessWidget {
+  static const _shelfHeight = 252.0;
+
+  final bool loading;
+  final List<_RelatedGroup> groups;
+
+  const _RelatedBooksSection({
+    required this.loading,
+    required this.groups,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Nothing to show and not loading.
+    if (!loading && groups.isEmpty) return const SizedBox.shrink();
+
+    final cs = Theme.of(context).colorScheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── Section header ────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Row(
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: cs.primary.withValues(alpha: 0.14),
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: PhosphorIcon(
+                    PhosphorIconsRegular.books,
+                    size: 16,
+                    color: cs.primary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'You Might Also Like',
+                    style: GoogleFonts.lora(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: cs.onSurface,
+                    ),
+                  ),
+                  Text(
+                    'Based on this book',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: cs.onSurface.withValues(alpha: 0.55),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        )
+            .animate()
+            .fadeIn(duration: 350.ms)
+            .slideY(begin: -0.06, end: 0, duration: 350.ms, curve: Curves.easeOut),
+
+        // ── Skeleton shown while loading ─────────────────────────────────
+        if (loading) ...[
+          _buildGroupSkeleton(context),
+          _buildGroupSkeleton(context),
+        ],
+
+        // ── Loaded groups ────────────────────────────────────────────────
+        for (final group in groups) _buildGroup(context, group, cs),
+
+        const SizedBox(height: 16),
+      ],
+    );
+  }
+
+  Widget _buildGroup(BuildContext context, _RelatedGroup group, ColorScheme cs) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 16, bottom: 8),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: cs.primary.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                PhosphorIcon(
+                  group.queryType == 'author'
+                      ? PhosphorIconsRegular.user
+                      : PhosphorIconsRegular.books,
+                  size: 12,
+                  color: cs.primary,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  group.label,
+                  style: GoogleFonts.lora(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: cs.onSurface,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        SizedBox(
+          height: _shelfHeight,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 0),
+            itemCount: group.books.length,
+            itemBuilder: (ctx, j) => Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: BookCard(book: group.books[j], animationIndex: j),
+            ),
+          ),
+        ),
+      ],
+    )
+        .animate()
+        .fadeIn(duration: 300.ms, delay: 80.ms)
+        .slideY(begin: 0.05, end: 0, duration: 300.ms, curve: Curves.easeOut);
+  }
+
+  Widget _buildGroupSkeleton(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 16, bottom: 8),
+          child: SkeletonWidget(width: 160, height: 22, borderRadius: 20),
+        ),
+        SizedBox(
+          height: _shelfHeight,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: EdgeInsets.zero,
+            itemCount: 4,
+            itemBuilder: (_, __) => Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SkeletonWidget(width: 120, height: 180, borderRadius: 8),
+                  const SizedBox(height: 6),
+                  SkeletonWidget(width: 100, height: 14, borderRadius: 4),
+                  const SizedBox(height: 4),
+                  SkeletonWidget(width: 80, height: 12, borderRadius: 4),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
