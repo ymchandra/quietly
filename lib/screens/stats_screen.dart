@@ -214,6 +214,9 @@ class StatsScreen extends StatelessWidget {
     return sorted.take(n).toList();
   }
 
+  // Minimum character count for a genre label to be considered meaningful.
+  static const _minLabelLength = 3;
+
   static String _cleanLabel(String raw) {
     const skip = {
       'fiction',
@@ -226,7 +229,7 @@ class StatsScreen extends StatelessWidget {
     final lower = raw.toLowerCase().trim();
     final segments = lower.split(RegExp(r'[&/]|--'));
     final first = segments.first.trim();
-    if (first.length < 3 || skip.contains(first)) return '';
+    if (first.length < _minLabelLength || skip.contains(first)) return '';
     return _capitalize(first);
   }
 
@@ -238,6 +241,8 @@ class StatsScreen extends StatelessWidget {
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
+// Converts a stored author name ("Last, First") to display form ("First Last").
+// If no comma is present the name is returned unchanged.
 String _formatAuthorName(String raw) {
   final parts = raw.split(',');
   return parts.reversed.map((p) => p.trim()).join(' ').trim();
@@ -643,6 +648,7 @@ class _RecentList extends StatelessWidget {
   }
 
   static String _monthShort(int m) {
+    // DateTime.month is guaranteed to be 1-12 by the Dart SDK.
     const months = [
       'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
