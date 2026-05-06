@@ -17,6 +17,7 @@ class SuggestionsProvider extends ChangeNotifier {
   bool get isLoading => _loading;
   bool get hasHistory => _history.isNotEmpty;
   List<SuggestionGroup> get groups => List.unmodifiable(_groups);
+  List<ReadingEvent> get history => List.unmodifiable(_history);
 
   Future<void> init() async {
     _history = await _storage.getReadingHistory();

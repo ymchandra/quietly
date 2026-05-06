@@ -10,6 +10,7 @@ import 'screens/book_detail_screen.dart';
 import 'screens/reader_screen.dart';
 import 'screens/main_screen.dart';
 import 'screens/topic_books_screen.dart';
+import 'screens/stats_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'models/book.dart';
 import 'providers/user_profile_provider.dart';
@@ -101,6 +102,11 @@ class _QuietlyAppState extends State<QuietlyApp> {
             topic: state.pathParameters['topic']!,
             label: state.uri.queryParameters['label'] ?? 'Category',
           ),
+        ),
+        GoRoute(
+          parentNavigatorKey: _rootNavigatorKey,
+          path: '/stats',
+          builder: (_, __) => const StatsScreen(),
         ),
       ],
     );
