@@ -230,15 +230,17 @@ class StatsScreen extends StatelessWidget {
     return _capitalize(first);
   }
 
-  static String _formatAuthorName(String raw) {
-    final parts = raw.split(',');
-    return parts.reversed.map((p) => p.trim()).join(' ').trim();
-  }
-
   static String _capitalize(String s) {
     if (s.isEmpty) return s;
     return s[0].toUpperCase() + s.substring(1);
   }
+}
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
+
+String _formatAuthorName(String raw) {
+  final parts = raw.split(',');
+  return parts.reversed.map((p) => p.trim()).join(' ').trim();
 }
 
 // ── Sub-widgets ───────────────────────────────────────────────────────────────
@@ -645,7 +647,7 @@ class _RecentList extends StatelessWidget {
       'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
     ];
-    return months[(m - 1).clamp(0, 11)];
+    return months[m - 1];
   }
 }
 
@@ -730,10 +732,5 @@ class _RecentRow extends StatelessWidget {
         .animate(delay: Duration(milliseconds: delay))
         .fadeIn(duration: 260.ms)
         .slideX(begin: 0.04, end: 0, duration: 260.ms, curve: Curves.easeOut);
-  }
-
-  static String _formatAuthorName(String raw) {
-    final parts = raw.split(',');
-    return parts.reversed.map((p) => p.trim()).join(' ').trim();
   }
 }
