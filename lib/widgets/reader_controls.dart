@@ -5,6 +5,9 @@ class ReaderControls extends StatelessWidget {
   final bool visible;
   final int currentPage;
   final int totalPages;
+  /// When provided (scroll mode), this overrides the page-based progress value
+  /// and changes the label to show percentage read instead of page numbers.
+  final double? readPercent;
   final Color bgColor;
   final Color textColor;
   final Color accentColor;
@@ -17,6 +20,7 @@ class ReaderControls extends StatelessWidget {
     required this.visible,
     required this.currentPage,
     required this.totalPages,
+    this.readPercent,
     required this.bgColor,
     required this.textColor,
     required this.accentColor,
@@ -84,7 +88,8 @@ class ReaderControls extends StatelessWidget {
                     ClipRRect(
                       borderRadius: BorderRadius.circular(3),
                       child: LinearProgressIndicator(
-                        value: totalPages > 0 ? currentPage / totalPages : 0,
+                        value: readPercent ??
+                            (totalPages > 0 ? currentPage / totalPages : 0),
                         minHeight: 3,
                         backgroundColor: accentColor.withValues(alpha: 0.2),
                         valueColor:
@@ -93,7 +98,9 @@ class ReaderControls extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Page $currentPage / $totalPages',
+                      readPercent != null
+                          ? '${(readPercent! * 100).round()}% read'
+                          : 'Page $currentPage / $totalPages',
                       style: TextStyle(
                           fontSize: 12,
                           color: textColor.withValues(alpha: 0.6)),

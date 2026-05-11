@@ -7,12 +7,14 @@ class ReaderSettings {
   final FontFamily fontFamily;
   final double fontSize;
   final LineHeight lineHeight;
+  final bool scrollMode;
 
   const ReaderSettings({
     this.theme = ThemeName.cream,
     this.fontFamily = FontFamily.lora,
     this.fontSize = 18.0,
     this.lineHeight = LineHeight.comfortable,
+    this.scrollMode = false,
   });
 
   double get lineHeightValue {
@@ -36,12 +38,14 @@ class ReaderSettings {
     FontFamily? fontFamily,
     double? fontSize,
     LineHeight? lineHeight,
+    bool? scrollMode,
   }) =>
       ReaderSettings(
         theme: theme ?? this.theme,
         fontFamily: fontFamily ?? this.fontFamily,
         fontSize: fontSize ?? this.fontSize,
         lineHeight: lineHeight ?? this.lineHeight,
+        scrollMode: scrollMode ?? this.scrollMode,
       );
 
   Map<String, dynamic> toJson() => {
@@ -49,6 +53,7 @@ class ReaderSettings {
         'fontFamily': fontFamily.name,
         'fontSize': fontSize,
         'lineHeight': lineHeight.name,
+        'scrollMode': scrollMode,
       };
 
   factory ReaderSettings.fromJson(Map<String, dynamic> json) => ReaderSettings(
@@ -65,6 +70,7 @@ class ReaderSettings {
           (e) => e.name == json['lineHeight'],
           orElse: () => LineHeight.comfortable,
         ),
+        scrollMode: json['scrollMode'] as bool? ?? false,
       );
 }
 

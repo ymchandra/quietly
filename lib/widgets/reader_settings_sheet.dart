@@ -116,6 +116,15 @@ class ReaderSettingsSheet extends StatelessWidget {
             onChanged: (i) => provider.updateForBook(
                 bookId, {'lineHeight': LineHeight.values[i].name}),
           ),
+          const SizedBox(height: 16),
+          const _SheetLabel('Reading Mode'),
+          const SizedBox(height: 8),
+          SegmentedControlWidget(
+            segments: const ['Pages', 'Scroll'],
+            selectedIndex: settings.scrollMode ? 1 : 0,
+            onChanged: (i) => provider.updateGlobal(
+                provider.settings.global.copyWith(scrollMode: i == 1)),
+          ),
           const SizedBox(height: 8),
         ],
       ),
