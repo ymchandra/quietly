@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -45,9 +44,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
   List<String> _allPages = [];
   List<String> _pages = [];
   late PageController _pageController;
+  late ScrollController _scrollController;
   int _currentPage = 0;
+  double _scrollPercent = 0.0;
   bool _showControls = true;
   Timer? _hideTimer;
+  Timer? _scrollDebounce;
   Size? _lastSize;
 
   /// Session tracking — set when content finishes loading.
@@ -66,12 +68,20 @@ class _ReaderScreenState extends State<ReaderScreen> {
   static const double _pageHorizontalPadding = 24.0;
   static const double _pageTopPadding = 64.0;
   static const double _pageBottomPadding = 88.0;
+  // Tap-zone thresholds: left zone = 0..30%, right zone = 70%..100% of screen width.
+  static const double _leftZoneThreshold = 0.30;
+  static const double _rightZoneThreshold = 0.70;
+  // Fraction of screen height scrolled per tap in continuous-scroll mode.
+  static const double _scrollPageFraction = 0.90;
+  // Minimum scroll-percent change before updating progress and triggering setState.
+  static const double _scrollProgressThreshold = 0.005;
 
   @override
   void initState() {
     super.initState();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _pageController = PageController();
+    _scrollController = ScrollController();
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
 
@@ -79,7 +89,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void dispose() {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _hideTimer?.cancel();
+    _scrollDebounce?.cancel();
     _pageController.dispose();
+    _scrollController.dispose();
     // Persist session stats (fire-and-forget; context is no longer available).
     final sp = _suggestionsProvider;
     if (sp != null && _sessionStartMs != null) {
@@ -218,6 +230,22 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (content.text == null || size.isEmpty) return;
     final settings =
         context.read<ReaderSettingsProvider>().forBook(widget.bookId);
+
+    if (settings.scrollMode) {
+      // In continuous-scroll mode, skip page splitting entirely. Restore the
+      // saved scroll position after the first layout frame.
+      final savedPercent =
+          context.read<LibraryProvider>().getProgress(widget.bookId)?.percent ??
+              0;
+      setState(() {
+        _scrollPercent = savedPercent;
+      });
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _restoreScrollPosition(savedPercent));
+      _scheduleHide();
+      return;
+    }
+
     final allPages = _splitPages(
       text: content.text!,
       textWidth: size.width - _pageHorizontalPadding * 2,
@@ -318,9 +346,65 @@ class _ReaderScreenState extends State<ReaderScreen> {
     return pages.isEmpty ? [''] : pages;
   }
 
-  void _onTap() {
-    setState(() => _showControls = !_showControls);
-    if (_showControls) _scheduleHide();
+  void _restoreScrollPosition(double savedPercent) {
+    if (!_scrollController.hasClients) return;
+    final maxExtent = _scrollController.position.maxScrollExtent;
+    if (maxExtent > 0 && savedPercent > 0) {
+      _scrollController.jumpTo((savedPercent * maxExtent).clamp(0, maxExtent));
+    }
+  }
+
+  void _onTapUp(TapUpDetails details) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
+    final dx = details.localPosition.dx;
+
+    final settings =
+        context.read<ReaderSettingsProvider>().forBook(widget.bookId);
+
+    if (settings.scrollMode && !_isImageBased) {
+      // In scroll mode: left/right zones scroll up/down by one screen.
+      if (!_scrollController.hasClients) return;
+      if (dx < screenWidth * _leftZoneThreshold) {
+        _scrollController.animateTo(
+          (_scrollController.offset - screenHeight * _scrollPageFraction)
+              .clamp(0.0, _scrollController.position.maxScrollExtent),
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+        );
+      } else if (dx > screenWidth * _rightZoneThreshold) {
+        _scrollController.animateTo(
+          (_scrollController.offset + screenHeight * _scrollPageFraction)
+              .clamp(0.0, _scrollController.position.maxScrollExtent),
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+        );
+      } else {
+        setState(() => _showControls = !_showControls);
+        if (_showControls) _scheduleHide();
+      }
+      return;
+    }
+
+    // Page mode: left zone = previous, right zone = next, centre = toggle UI.
+    if (dx < screenWidth * _leftZoneThreshold) {
+      if (_currentPage > 0) {
+        _pageController.previousPage(
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeInOut,
+        );
+      }
+    } else if (dx > screenWidth * _rightZoneThreshold) {
+      if (_currentPage < _pages.length - 1) {
+        _pageController.nextPage(
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeInOut,
+        );
+      }
+    } else {
+      setState(() => _showControls = !_showControls);
+      if (_showControls) _scheduleHide();
+    }
   }
 
   void _scheduleHide() {
@@ -581,55 +665,89 @@ class _ReaderScreenState extends State<ReaderScreen> {
             height: settings.lineHeightValue,
             color: textColor);
 
+    final useScrollMode = settings.scrollMode && !_isImageBased;
+
     return Scaffold(
       backgroundColor: bgColor,
       body: GestureDetector(
-        onTap: _onTap,
+        onTapUp: _onTapUp,
         child: Stack(
           children: [
-            _pages.isEmpty
-                ? Center(child: Text('No content', style: textStyle))
-                : PageView.builder(
-                    controller: _pageController,
-                    onPageChanged: _onPageChanged,
-                    itemCount: _pages.length,
-                    itemBuilder: (ctx, i) => AnimatedBuilder(
-                      animation: _pageController,
-                      builder: (context, child) {
-                        double pageOffset = 0.0;
-                        if (_pageController.hasClients &&
-                            _pageController.page != null) {
-                          pageOffset = i - _pageController.page!;
-                        }
-                        return _PageTurnItem(
-                          pageOffset: pageOffset,
-                          child: child!,
+            if (useScrollMode && _content?.text != null)
+              NotificationListener<ScrollNotification>(
+                onNotification: (notif) {
+                  if (notif is ScrollUpdateNotification &&
+                      _scrollController.hasClients) {
+                    final pos = _scrollController.position;
+                    if (pos.maxScrollExtent > 0) {
+                      final pct =
+                          (pos.pixels / pos.maxScrollExtent).clamp(0.0, 1.0);
+                      if ((pct - _scrollPercent).abs() >
+                          _scrollProgressThreshold) {
+                        setState(() => _scrollPercent = pct);
+                        _scrollDebounce?.cancel();
+                        _scrollDebounce = Timer(
+                          const Duration(milliseconds: 500),
+                          () => context
+                              .read<LibraryProvider>()
+                              .updateProgress(widget.bookId, pct),
                         );
-                      },
-                      child: _isImageBased
-                          ? _buildImagePage(i)
-                          : Container(
-                              color: bgColor,
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  _pageHorizontalPadding,
-                                  _pageTopPadding,
-                                  _pageHorizontalPadding,
-                                  _pageBottomPadding,
-                                ),
-                                child: Text(
-                                  _pages[i],
-                                  style: textStyle,
-                                  textAlign: TextAlign.justify,
-                                ),
-                              ),
-                            ),
+                      }
+                    }
+                  }
+                  return false;
+                },
+                child: SingleChildScrollView(
+                  controller: _scrollController,
+                  physics: const ClampingScrollPhysics(),
+                  child: SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        _pageHorizontalPadding,
+                        _pageTopPadding,
+                        _pageHorizontalPadding,
+                        _pageBottomPadding,
+                      ),
+                      child: Text(
+                        _content!.text!,
+                        style: textStyle,
+                        textAlign: TextAlign.justify,
+                      ),
                     ),
                   ),
+                ),
+              )
+            else if (_pages.isEmpty)
+              Center(child: Text('No content', style: textStyle))
+            else
+              PageView.builder(
+                controller: _pageController,
+                onPageChanged: _onPageChanged,
+                itemCount: _pages.length,
+                itemBuilder: (ctx, i) => _isImageBased
+                    ? _buildImagePage(i)
+                    : Container(
+                        color: bgColor,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(
+                            _pageHorizontalPadding,
+                            _pageTopPadding,
+                            _pageHorizontalPadding,
+                            _pageBottomPadding,
+                          ),
+                          child: Text(
+                            _pages[i],
+                            style: textStyle,
+                            textAlign: TextAlign.justify,
+                          ),
+                        ),
+                      ),
+              ),
             ReaderControls(
               visible: _showControls,
               currentPage: _currentPage + 1,
               totalPages: _allPages.length,
+              readPercent: useScrollMode ? _scrollPercent : null,
               bgColor: _isImageBased
                   ? Colors.black.withValues(alpha: 0.7)
                   : bgColor.withValues(alpha: 0.95),
@@ -760,72 +878,6 @@ class _ReaderDebugSnapshotTile extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// Wraps a reader page and applies a 3D perspective rotation during page
-/// transitions, mimicking the feel of turning a physical book page.
-///
-/// [pageOffset] is the fractional distance from the current page index:
-///   0.0  → fully visible current page
-///  -1.0  → fully off-screen to the left (already turned)
-///   1.0  → fully off-screen to the right (not yet turned)
-class _PageTurnItem extends StatelessWidget {
-  final double pageOffset;
-  final Widget child;
-
-  const _PageTurnItem({
-    required this.pageOffset,
-    required this.child,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final t = pageOffset.clamp(-1.0, 1.0);
-    final absT = t.abs();
-
-    // No transform needed when the page is fully in view.
-    if (absT < 0.001) return child;
-
-    // Pages rotate around the left spine (book binding) just like a real book.
-    final angle = t * (math.pi / 2.0);
-    final matrix = Matrix4.identity()
-      ..setEntry(3, 2, 0.001) // perspective depth
-      ..rotateY(angle);
-
-    return Transform(
-      transform: matrix,
-      alignment: Alignment.centerLeft,
-      child: Stack(
-        children: [
-          child,
-          // Gradient shadow that grows as the page turns, giving depth.
-          Positioned.fill(
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    // Outgoing page (t<0): shadow on right edge (turning edge).
-                    // Incoming page (t>0): shadow on left edge (spine side).
-                    begin: t > 0
-                        ? Alignment.centerLeft
-                        : Alignment.centerRight,
-                    end: t > 0
-                        ? Alignment.centerRight
-                        : Alignment.centerLeft,
-                    colors: [
-                      Colors.black.withValues(alpha: absT * 0.45),
-                      Colors.transparent,
-                    ],
-                    stops: const [0.0, 0.65],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
