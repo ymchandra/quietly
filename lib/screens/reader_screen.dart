@@ -1173,6 +1173,44 @@ class _ReaderScreenState extends State<ReaderScreen> {
                           ),
                     );
                   },
+                  onTouchUp: (_, __) {
+                    if (!mounted) return;
+                    setState(() => _showControls = !_showControls);
+                    if (_showControls) _scheduleHide();
+                  },
+                  onSelectionChanging: () {
+                    if (_showControls) setState(() => _showControls = false);
+                  },
+                  onInitialPositionLoading: (kind) {
+                    _recordDebug(
+                      OpenLibraryDebugSnapshot(
+                        requestUrl:
+                            'reader://book/${widget.bookId}/epub-viewer-state',
+                        statusCode: null,
+                        success: true,
+                        bodyLength: 0,
+                        bodyPreview: 'state=initial-position-loading:$kind',
+                        resultCount: _epubChapters.length,
+                        error: null,
+                        timestamp: DateTime.now(),
+                      ),
+                    );
+                  },
+                  onLocationLoaded: () {
+                    _recordDebug(
+                      OpenLibraryDebugSnapshot(
+                        requestUrl:
+                            'reader://book/${widget.bookId}/epub-viewer-state',
+                        statusCode: null,
+                        success: true,
+                        bodyLength: 0,
+                        bodyPreview: 'state=location-map-ready',
+                        resultCount: _epubChapters.length,
+                        error: null,
+                        timestamp: DateTime.now(),
+                      ),
+                    );
+                  },
                 ),
               ),
             ),
