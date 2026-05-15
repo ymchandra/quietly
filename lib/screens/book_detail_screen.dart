@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/book.dart';
 import '../providers/library_provider.dart';
 import '../services/openlibrary_service.dart';
@@ -49,6 +50,11 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   bool _canRead = true;
   String? _error;
 
+  // While the main book details can render from an initialBook, subjects and
+  // bookshelves should still present placeholder chips until the enriched API
+  // response arrives.
+  bool _metadataLoading = false;
+
   // Related books state
   List<_RelatedGroup> _relatedGroups = [];
   bool _relatedLoading = false;
@@ -70,6 +76,8 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     super.initState();
     _book = widget.initialBook;
     _loading = _book == null;
+    _metadataLoading = _book != null;
+    _relatedLoading = _book != null;
     if (_book != null && _ebookAccess == EbookAccess.unknown) {
       _checkReadability(_book!);
     }
@@ -83,6 +91,8 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         setState(() {
           _book = book;
           _loading = false;
+          _metadataLoading = false;
+          _relatedLoading = true;
           _error = null;
         });
         // Only run network probe when access is still unknown after enrichment.
@@ -98,6 +108,8 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
             _error = e.toString();
           }
           _loading = false;
+          _metadataLoading = false;
+          _relatedLoading = false;
         });
       }
     }
@@ -196,6 +208,36 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     return s[0].toUpperCase() + s.substring(1);
   }
 
+  Widget _buildMetadataSection(
+    BuildContext context, {
+    required String title,
+    required bool loading,
+    required List<String> items,
+    required String emptyMessage,
+    required List<double> skeletonWidths,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: GoogleFonts.lora(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        if (loading)
+          _TagSectionSkeleton(widths: skeletonWidths)
+        else if (items.isEmpty)
+          Text(
+            emptyMessage,
+            style: TextStyle(color: cs.onSurface.withValues(alpha: 0.7)),
+          )
+        else
+          _ChipWrap(items: items),
+      ],
+    );
+  }
+
   Future<void> _download(LibraryProvider lib) async {
     if (_book == null || !_readEnabled) return;
     setState(() => _downloading = true);
@@ -211,6 +253,78 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     } finally {
       if (mounted) setState(() => _downloading = false);
     }
+  }
+
+  Future<void> _launchExternal(BuildContext context, String url) async {
+    final uri = Uri.parse(url);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open the link.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _showBorrowOptions(BuildContext context, Book book) async {
+    final cs = Theme.of(context).colorScheme;
+    final openLibraryUrl = 'https://openlibrary.org/works/OL${book.id}W';
+    final worldcatUrl =
+        'https://www.worldcat.org/search?q=${Uri.encodeComponent('${book.title} ${book.authorName}')}';
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: cs.surface,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Borrow options',
+                  style: GoogleFonts.lora(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'This title is borrowable through Open Library. You can also search local libraries nearby.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: cs.onSurface.withValues(alpha: 0.72),
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _LinkButton(
+                  icon: PhosphorIconsRegular.bookOpen,
+                  label: 'Borrow on\nOpen Library',
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    _launchExternal(context, openLibraryUrl);
+                  },
+                  cs: cs,
+                ),
+                const SizedBox(height: 10),
+                _LinkButton(
+                  icon: PhosphorIconsRegular.buildings,
+                  label: 'Find at a\nLocal Library',
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    _launchExternal(context, worldcatUrl);
+                  },
+                  cs: cs,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _checkReadability(Book book) async {
@@ -239,7 +353,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     final inWishlist = lib.isInWishlist(book.id);
     final inReadLater = lib.isInReadLater(book.id);
     final downloaded = lib.isDownloaded(book.id);
-    final readDisabled = _accessPending || !_readEnabled;
+    final borrowable = _ebookAccess == EbookAccess.borrowable;
+    final primaryActionDisabled = _accessPending || (!_readEnabled && !borrowable);
+    final offlineDisabled = !_readEnabled;
 
     return Scaffold(
       appBar: AppBar(
@@ -318,12 +434,18 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: readDisabled
+                onPressed: primaryActionDisabled
                     ? null
-                    : () => context.push('/reader/${book.id}', extra: book),
+                    : () {
+                        if (_readEnabled) {
+                          context.push('/reader/${book.id}', extra: book);
+                        } else if (borrowable) {
+                          _showBorrowOptions(context, book);
+                        }
+                      },
                 style: FilledButton.styleFrom(backgroundColor: cs.primary),
                 child: Text(
-                  _readButtonLabel,
+                  _primaryActionLabel,
                   style: const TextStyle(fontSize: 16),
                 ),
               ),
@@ -332,7 +454,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
             SizedBox(
               width: double.infinity,
               child: OutlinedButton(
-                onPressed: downloaded || _downloading || readDisabled
+                onPressed: downloaded || _downloading || offlineDisabled
                     ? null
                     : () => _download(lib),
                 child: _downloading
@@ -352,31 +474,29 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
             if (!_accessPending && !_readEnabled) ...[
               const SizedBox(height: 8),
               _AccessInfoBanner(ebookAccess: _ebookAccess),
+              if (_ebookAccess == EbookAccess.borrowable) ...[
+                const SizedBox(height: 10),
+                _BorrowLinksBanner(book: book),
+              ],
             ],
             const SizedBox(height: 24),
-            Text('Subjects',
-                style:
-                    GoogleFonts.lora(fontSize: 16, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            if (book.subjects.isEmpty)
-              Text(
-                'No subject information available for this title.',
-                style: TextStyle(color: cs.onSurface.withValues(alpha: 0.7)),
-              )
-            else
-              _ChipWrap(items: book.subjects),
+            _buildMetadataSection(
+              context,
+              title: 'Subjects',
+              items: book.subjects,
+              loading: _metadataLoading,
+              emptyMessage: 'No subject information available for this title.',
+              skeletonWidths: const [84, 62, 96, 74, 88],
+            ),
             const SizedBox(height: 16),
-            Text('Bookshelves',
-                style:
-                    GoogleFonts.lora(fontSize: 16, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            if (book.bookshelves.isEmpty)
-              Text(
-                'No bookshelf tags available for this title.',
-                style: TextStyle(color: cs.onSurface.withValues(alpha: 0.7)),
-              )
-            else
-              _ChipWrap(items: book.bookshelves),
+            _buildMetadataSection(
+              context,
+              title: 'Bookshelves',
+              items: book.bookshelves,
+              loading: _metadataLoading,
+              emptyMessage: 'No bookshelf tags available for this title.',
+              skeletonWidths: const [78, 90, 66, 84],
+            ),
             const SizedBox(height: 32),
             _RelatedBooksSection(
               loading: _relatedLoading,
@@ -394,7 +514,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
       case EbookAccess.publicDomain:
         return 'Read';
       case EbookAccess.borrowable:
-        return 'Borrowing Not Supported';
+        return 'Borrow Options';
       case EbookAccess.printDisabled:
         return 'Restricted Access';
       case EbookAccess.noEbook:
@@ -403,6 +523,8 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         return _canRead ? 'Read' : 'Text Not Available';
     }
   }
+
+  String get _primaryActionLabel => _readButtonLabel;
 
   Widget _buildSkeleton() {
     return Scaffold(
@@ -594,7 +716,7 @@ class _AccessInfoBanner extends StatelessWidget {
     switch (access) {
       case EbookAccess.borrowable:
         return 'This title is available for controlled digital lending only. '
-            'In-app reading requires a public domain edition.';
+            'Use Borrow options above to open Open Library or find a local library.';
       case EbookAccess.printDisabled:
         return 'Access to this title is restricted to users with print disabilities '
             'and cannot be read in-app.';
@@ -606,6 +728,145 @@ class _AccessInfoBanner extends StatelessWidget {
       case EbookAccess.publicDomain:
         return null;
     }
+  }
+}
+
+/// Shown for borrowable books — gives users clickable links to borrow
+/// the book on Open Library or find it at their local library via WorldCat.
+class _BorrowLinksBanner extends StatelessWidget {
+  final Book book;
+  const _BorrowLinksBanner({required this.book});
+
+  String get _openLibraryUrl =>
+      'https://openlibrary.org/works/OL${book.id}W';
+
+  String get _worldcatUrl {
+    final q = Uri.encodeComponent('${book.title} ${book.authorName}');
+    return 'https://www.worldcat.org/search?q=$q';
+  }
+
+  Future<void> _launch(BuildContext context, String url) async {
+    final uri = Uri.parse(url);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open the link.')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: cs.secondaryContainer,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: cs.outline.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              PhosphorIcon(PhosphorIconsRegular.link,
+                  size: 14, color: cs.onSecondaryContainer),
+              const SizedBox(width: 6),
+              Text(
+                'Borrow this book online or at a library',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: cs.onSecondaryContainer,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: _LinkButton(
+                  icon: PhosphorIconsRegular.bookOpen,
+                  label: 'Borrow on\nOpen Library',
+                  onTap: () => _launch(context, _openLibraryUrl),
+                  cs: cs,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _LinkButton(
+                  icon: PhosphorIconsRegular.buildings,
+                  label: 'Find at a\nLocal Library',
+                  onTap: () => _launch(context, _worldcatUrl),
+                  cs: cs,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    )
+        .animate()
+        .fadeIn(duration: 280.ms)
+        .slideY(begin: 0.05, end: 0, duration: 280.ms, curve: Curves.easeOut);
+  }
+}
+
+class _LinkButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final ColorScheme cs;
+
+  const _LinkButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    required this.cs,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: cs.surface,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: cs.outline.withValues(alpha: 0.5)),
+          ),
+          child: Row(
+            children: [
+              PhosphorIcon(icon, size: 16, color: cs.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: cs.primary,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+              PhosphorIcon(
+                PhosphorIconsRegular.arrowSquareOut,
+                size: 12,
+                color: cs.primary.withValues(alpha: 0.7),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -680,10 +941,32 @@ class _ChipWrap extends StatelessWidget {
   }
 }
 
+class _TagSectionSkeleton extends StatelessWidget {
+  final List<double> widths;
+  const _TagSectionSkeleton({required this.widths});
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: widths
+          .map(
+            (width) => SkeletonWidget(
+              width: width,
+              height: 30,
+              borderRadius: 20,
+            ),
+          )
+          .toList(),
+    );
+  }
+}
+
 /// Displays zero or more horizontal shelves of books related to the current
 /// book (by author and/or subject). While fetching, shows skeleton shelves.
 class _RelatedBooksSection extends StatelessWidget {
-  static const _shelfHeight = 252.0;
+  static const _shelfHeight = 272.0;
 
   final bool loading;
   final List<_RelatedGroup> groups;

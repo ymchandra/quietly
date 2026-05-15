@@ -5,13 +5,17 @@ import '../services/openlibrary_service.dart';
 import '../widgets/book_list_row.dart';
 
 class TopicBooksScreen extends StatefulWidget {
-  final String topic;
   final String label;
+  final String? topic;
+  final String? queryType;
+  final String? queryValue;
 
   const TopicBooksScreen({
     super.key,
-    required this.topic,
     required this.label,
+    this.topic,
+    this.queryType,
+    this.queryValue,
   });
 
   @override
@@ -66,15 +70,16 @@ class _TopicBooksScreenState extends State<TopicBooksScreen> {
     }
 
     try {
-      final resp = await _service.fetchBooks(topic: widget.topic, page: _page);
+      final resp = await _fetchPage(_page);
+      final pageBooks = _filterForRoute(resp.results);
       if (!mounted) return;
       setState(() {
         if (reset) {
           _books
             ..clear()
-            ..addAll(resp.results);
+            ..addAll(pageBooks);
         } else {
-          _books.addAll(resp.results);
+          _books.addAll(pageBooks);
         }
         _hasMore = resp.next != null && resp.results.isNotEmpty;
         if (_hasMore) _page += 1;
@@ -85,7 +90,8 @@ class _TopicBooksScreenState extends State<TopicBooksScreen> {
       if (!mounted) return;
       if (!reset && _books.isNotEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not load more books. Pull to retry.')),
+          const SnackBar(
+              content: Text('Could not load more books. Pull to retry.')),
         );
       }
       setState(() {
@@ -98,13 +104,53 @@ class _TopicBooksScreenState extends State<TopicBooksScreen> {
     }
   }
 
+  Future<OpenLibraryResponse> _fetchPage(int page) {
+    final type = widget.queryType;
+    final value = widget.queryValue;
+    if (type == 'author' && value != null && value.trim().isNotEmpty) {
+      final displayName = _formatAuthorName(value);
+      return _service.fetchBooks(search: displayName, page: page);
+    }
+    if (type == 'subject' && value != null && value.trim().isNotEmpty) {
+      return _service.fetchBooks(topic: value, page: page);
+    }
+    final fallbackTopic = widget.topic;
+    if (fallbackTopic != null && fallbackTopic.isNotEmpty) {
+      return _service.fetchBooks(topic: fallbackTopic, page: page);
+    }
+    return _service.fetchBooks(topic: 'fiction', page: page);
+  }
+
+  static String _formatAuthorName(String raw) {
+    final parts = raw.split(',');
+    return parts.reversed.map((p) => p.trim()).join(' ').trim();
+  }
+
+  List<Book> _filterForRoute(List<Book> books) {
+    if (widget.queryType != 'author' ||
+        widget.queryValue == null ||
+        widget.queryValue!.trim().isEmpty) {
+      return books;
+    }
+    final rawName = widget.queryValue!.toLowerCase();
+    final display = _formatAuthorName(widget.queryValue!).toLowerCase();
+    final lastName = rawName.split(',').first.trim();
+    return books.where((book) {
+      return book.authors.any((a) {
+        final aLower = a.name.toLowerCase();
+        return aLower.contains(lastName) || display.contains(aLower);
+      });
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.label, style: GoogleFonts.lora(fontWeight: FontWeight.w600)),
+        title: Text(widget.label,
+            style: GoogleFonts.lora(fontWeight: FontWeight.w600)),
       ),
       body: RefreshIndicator(
         onRefresh: () => _load(reset: true),
@@ -141,7 +187,9 @@ class _TopicBooksScreenState extends State<TopicBooksScreen> {
                         physics: const AlwaysScrollableScrollPhysics(),
                         children: const [
                           SizedBox(height: 120),
-                          Center(child: Text('No books found in this category yet.')),
+                          Center(
+                              child:
+                                  Text('No books found in this category yet.')),
                         ],
                       )
                     : ListView.builder(

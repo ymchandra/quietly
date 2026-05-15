@@ -64,7 +64,25 @@ class BookListRow extends StatelessWidget {
                           fontSize: 13,
                           color: cs.onSurface.withValues(alpha: 0.6))),
                   const SizedBox(height: 6),
-                  if (!book.hasFullText)
+                  if (book.ebookAccess == EbookAccess.borrowable)
+                    Row(
+                      children: [
+                        PhosphorIcon(
+                          PhosphorIconsRegular.clockCounterClockwise,
+                          size: 12,
+                          color: cs.primary.withValues(alpha: 0.75),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Borrowable on Open Library',
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: cs.primary.withValues(alpha: 0.75),
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    )
+                  else if (!book.hasFullText)
                     Row(
                       children: [
                         PhosphorIcon(

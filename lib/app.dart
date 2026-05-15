@@ -63,8 +63,7 @@ class _QuietlyAppState extends State<QuietlyApp> {
                   path: '/library', builder: (_, __) => const LibraryScreen()),
             ]),
             StatefulShellBranch(routes: [
-              GoRoute(
-                  path: '/lists', builder: (_, __) => const ListsScreen()),
+              GoRoute(path: '/lists', builder: (_, __) => const ListsScreen()),
             ]),
             StatefulShellBranch(routes: [
               GoRoute(
@@ -101,6 +100,15 @@ class _QuietlyAppState extends State<QuietlyApp> {
           builder: (_, state) => TopicBooksScreen(
             topic: state.pathParameters['topic']!,
             label: state.uri.queryParameters['label'] ?? 'Category',
+          ),
+        ),
+        GoRoute(
+          parentNavigatorKey: _rootNavigatorKey,
+          path: '/discover/suggestions',
+          builder: (_, state) => TopicBooksScreen(
+            label: state.uri.queryParameters['label'] ?? 'For You',
+            queryType: state.uri.queryParameters['type'],
+            queryValue: state.uri.queryParameters['value'],
           ),
         ),
         GoRoute(
@@ -217,4 +225,3 @@ class _QuietlyAppState extends State<QuietlyApp> {
     );
   }
 }
-

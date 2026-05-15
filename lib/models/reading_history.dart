@@ -65,11 +65,16 @@ class SuggestionGroup {
   final String queryValue;
   final List<String> bookJsons;
 
+  /// Optional: title of the book from reading history that triggered this group.
+  /// Used to show "Because you read …" context in the UI.
+  final String? sourceBookTitle;
+
   const SuggestionGroup({
     required this.label,
     required this.queryType,
     required this.queryValue,
     required this.bookJsons,
+    this.sourceBookTitle,
   });
 
   Map<String, dynamic> toJson() => {
@@ -77,6 +82,7 @@ class SuggestionGroup {
         'queryType': queryType,
         'queryValue': queryValue,
         'bookJsons': bookJsons,
+        if (sourceBookTitle != null) 'sourceBookTitle': sourceBookTitle,
       };
 
   factory SuggestionGroup.fromJson(Map<String, dynamic> json) =>
@@ -85,5 +91,6 @@ class SuggestionGroup {
         queryType: json['queryType'] as String? ?? 'subject',
         queryValue: json['queryValue'] as String? ?? '',
         bookJsons: List<String>.from(json['bookJsons'] as List? ?? []),
+        sourceBookTitle: json['sourceBookTitle'] as String?,
       );
 }

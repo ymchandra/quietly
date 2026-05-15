@@ -33,7 +33,7 @@ class DiscoverScreen extends StatefulWidget {
 class _DiscoverScreenState extends State<DiscoverScreen> {
   static const _previewCount = 10;
   static const _initialTopicBatch = 2;
-  static const _shelfHeight = 252.0;
+  static const _shelfHeight = 272.0;
   final _service = OpenLibraryService();
   final _storage = StorageService();
   final Map<String, List<Book>> _shelves = {};
@@ -56,11 +56,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final allowed =
-        context.read<UserProfileProvider>().allowedTopics.toSet();
-    _topics = _allTopics
-        .where((t) => allowed.contains(t['topic']))
-        .toList();
+    final allowed = context.read<UserProfileProvider>().allowedTopics.toSet();
+    _topics = _allTopics.where((t) => allowed.contains(t['topic'])).toList();
     if (!_initialized) {
       _initialized = true;
       _loadInitialShelves();
@@ -79,7 +76,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     if (!mounted) return;
     if (results.every((ok) => !ok)) {
       setState(() {
-        _catalogError = 'Could not load books. Check your internet and pull to retry.';
+        _catalogError =
+            'Could not load books. Check your internet and pull to retry.';
       });
     }
   }
@@ -99,7 +97,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     if (!mounted) return;
     if (results.every((ok) => !ok)) {
       setState(() {
-        _catalogError = 'Could not load books. Check your internet and pull to retry.';
+        _catalogError =
+            'Could not load books. Check your internet and pull to retry.';
       });
     }
   }
@@ -178,6 +177,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           _searchResults = resp.results;
           _searchLoading = false;
         });
+        if (resp.results.isEmpty) {
+          _storage.incrementDiscoverMetric('discover_search_no_results');
+        }
       }
     } catch (_) {
       if (mounted && _query == q) {
@@ -283,10 +285,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
     final suggestions = context.watch<SuggestionsProvider>();
     final suggestionGroups = suggestions.groups;
-    final showSuggestions =
-        suggestions.hasHistory && suggestionGroups.isNotEmpty;
+    final showSuggestions = suggestionGroups.isNotEmpty;
     final showSuggestionsLoading =
-        suggestions.hasHistory && suggestions.isLoading && suggestionGroups.isEmpty;
+        suggestions.isLoading && suggestionGroups.isEmpty;
 
     return ListView.builder(
       padding: const EdgeInsets.only(bottom: 16),
@@ -308,8 +309,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
             return _buildSuggestionShelfSkeleton();
           }
           if (showSuggestions && i <= suggestionGroups.length) {
-            return _buildSuggestionShelf(
-                suggestionGroups[i - 1], suggestions);
+            return _buildSuggestionShelf(suggestionGroups[i - 1], suggestions);
           }
           // Offset the raw ListView index to get the _topics index.
           // When showing suggestions: offset = 1 (header) + N (suggestion shelves).
@@ -345,9 +345,13 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                     ),
                   ),
                   TextButton(
-                    onPressed: () => context.push(
-                      '/discover/topic/$topic?label=${Uri.encodeComponent(label)}',
-                    ),
+                    onPressed: () {
+                      _storage.incrementDiscoverMetric(
+                          'discover_show_all_topic_tap');
+                      context.push(
+                        '/discover/topic/$topic?label=${Uri.encodeComponent(label)}',
+                      );
+                    },
                     child: const Text('Show all'),
                   ),
                 ],
@@ -376,35 +380,35 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                             ],
                           ),
                         )
-                  : books.isEmpty
-                      ? const Center(
-                          child: Text('No books for this shelf yet'),
-                        )
-                      : ListView.builder(
-                          scrollDirection: Axis.horizontal,
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 16),
-                          itemCount: books.length + 1,
-                          itemBuilder: (ctx, j) {
-                            if (j == books.length) {
-                              return Padding(
-                                padding: const EdgeInsets.only(right: 12),
-                                child: _ShowAllCard(
-                                  onTap: () => context.push(
-                                    '/discover/topic/$topic?label=${Uri.encodeComponent(label)}',
+                      : books.isEmpty
+                          ? const Center(
+                              child: Text('No books for this shelf yet'),
+                            )
+                          : ListView.builder(
+                              scrollDirection: Axis.horizontal,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 16),
+                              itemCount: books.length + 1,
+                              itemBuilder: (ctx, j) {
+                                if (j == books.length) {
+                                  return Padding(
+                                    padding: const EdgeInsets.only(right: 12),
+                                    child: _ShowAllCard(
+                                      onTap: () => context.push(
+                                        '/discover/topic/$topic?label=${Uri.encodeComponent(label)}',
+                                      ),
+                                    ),
+                                  );
+                                }
+                                return Padding(
+                                  padding: const EdgeInsets.only(right: 12),
+                                  child: BookCard(
+                                    book: books[j],
+                                    animationIndex: j,
                                   ),
-                                ),
-                              );
-                            }
-                            return Padding(
-                              padding: const EdgeInsets.only(right: 12),
-                              child: BookCard(
-                                book: books[j],
-                                animationIndex: j,
-                              ),
-                            );
-                          },
-                        ),
+                                );
+                              },
+                            ),
             ),
           ],
         );
@@ -446,7 +450,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                 ),
               ),
               Text(
-                'Based on your reading',
+                context.read<SuggestionsProvider>().hasHistory
+                    ? 'Based on your reading'
+                    : 'Popular picks to get started',
                 style: TextStyle(
                   fontSize: 12,
                   color: cs.onSurface.withValues(alpha: 0.55),
@@ -464,47 +470,78 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
   Widget _buildSuggestionShelf(
       SuggestionGroup group, SuggestionsProvider suggestions) {
-    final books = suggestions.booksForGroup(group);
+    final books = _dedupSuggestionBooks(suggestions.booksForGroup(group));
     final cs = Theme.of(context).colorScheme;
+    final sourceTitle = group.sourceBookTitle;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 14, 12, 8),
+          padding: const EdgeInsets.fromLTRB(20, 14, 12, 4),
           child: Row(
             children: [
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: cs.primary.withValues(alpha: 0.10),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    PhosphorIcon(
-                      group.queryType == 'author'
-                          ? PhosphorIconsRegular.user
-                          : PhosphorIconsRegular.books,
-                      size: 12,
-                      color: cs.primary,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      group.label,
-                      style: GoogleFonts.lora(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: cs.onSurface,
+              Expanded(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      PhosphorIcon(
+                        group.queryType == 'author'
+                            ? PhosphorIconsRegular.user
+                            : PhosphorIconsRegular.books,
+                        size: 12,
+                        color: cs.primary,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          group.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.lora(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            color: cs.onSurface,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
+              ),
+              TextButton(
+                onPressed: () {
+                  _storage.incrementDiscoverMetric(
+                      'discover_show_all_suggestion_tap');
+                  context.push(
+                    '/discover/suggestions?type=${Uri.encodeComponent(group.queryType)}&value=${Uri.encodeComponent(group.queryValue)}&label=${Uri.encodeComponent(group.label)}',
+                  );
+                },
+                child: const Text('Show all'),
               ),
             ],
           ),
         ),
+        if (sourceTitle != null && sourceTitle.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
+            child: Text(
+              'Because you read "$sourceTitle"',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                color: cs.onSurface.withValues(alpha: 0.50),
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ),
         SizedBox(
           height: _shelfHeight,
           child: books.isEmpty
@@ -668,6 +705,26 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       ),
     );
   }
+
+  List<Book> _dedupSuggestionBooks(List<Book> suggestions) {
+    final staticIds = <int>{
+      for (final shelf in _shelves.values)
+        for (final b in shelf) b.id,
+    };
+    final seen = <int>{};
+    final filtered = <Book>[];
+    for (final b in suggestions) {
+      if (filtered.length >= _previewCount) break;
+      if (staticIds.contains(b.id)) continue;
+      if (seen.add(b.id)) filtered.add(b);
+    }
+    if (filtered.isNotEmpty) return filtered;
+    for (final b in suggestions) {
+      if (filtered.length >= _previewCount) break;
+      if (seen.add(b.id)) filtered.add(b);
+    }
+    return filtered;
+  }
 }
 
 class _DebugSnapshotTile extends StatelessWidget {
@@ -733,7 +790,9 @@ class _DebugSnapshotTile extends StatelessWidget {
             borderRadius: BorderRadius.circular(8),
           ),
           child: SelectableText(
-            snapshot.bodyPreview.isEmpty ? '(empty body)' : snapshot.bodyPreview,
+            snapshot.bodyPreview.isEmpty
+                ? '(empty body)'
+                : snapshot.bodyPreview,
             style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
           ),
         ),
@@ -749,11 +808,15 @@ class _ShowAllCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final storage = StorageService();
     return Material(
       color: cs.surface,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
-        onTap: onTap,
+        onTap: () {
+          storage.incrementDiscoverMetric('discover_show_all_topic_tap');
+          onTap();
+        },
         borderRadius: BorderRadius.circular(12),
         child: Container(
           width: 120,

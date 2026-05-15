@@ -105,6 +105,40 @@ class _BookCardState extends State<BookCard>
                         ),
                       ),
                     ),
+                  if (widget.book.ebookAccess == EbookAccess.borrowable)
+                    Positioned(
+                      top: 6,
+                      left: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: cs.secondaryContainer.withValues(alpha: 0.92),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                              color: cs.outline.withValues(alpha: 0.25)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            PhosphorIcon(
+                              PhosphorIconsRegular.clockCounterClockwise,
+                              size: 10,
+                              color: cs.onSecondaryContainer,
+                            ),
+                            const SizedBox(width: 3),
+                            Text(
+                              'Borrowable',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: cs.onSecondaryContainer,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                 ],
               ),
               const SizedBox(height: 6),
@@ -124,6 +158,19 @@ class _BookCardState extends State<BookCard>
                     fontSize: 11,
                     color: cs.onSurface.withValues(alpha: 0.6)),
               ),
+              if (widget.book.ebookAccess == EbookAccess.borrowable) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Borrow on Open Library',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: cs.primary.withValues(alpha: 0.8),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ],
           ),
         ),

@@ -35,6 +35,7 @@ class StorageService {
   static const _readingHistoryKey = '${_prefix}readingHistory';
   static const _shelfCacheKey = '${_prefix}shelfCache';
   static const _suggestionsCacheKey = '${_prefix}suggestionsCache';
+  static const _discoverMetricsKey = '${_prefix}discoverMetrics';
 
   static const _maxReadingHistorySize = 50;
   // Shelf cache expires after 24 hours (expressed in milliseconds).
@@ -188,8 +189,8 @@ class StorageService {
     final deduped = existing.where((e) => e.bookId != event.bookId).toList();
     final updated = [carried, ...deduped].take(_maxReadingHistorySize).toList();
     final prefs = await _prefs;
-    await prefs.setString(
-        _readingHistoryKey, json.encode(updated.map((e) => e.toJson()).toList()));
+    await prefs.setString(_readingHistoryKey,
+        json.encode(updated.map((e) => e.toJson()).toList()));
   }
 
   /// Adds [addPages] and [addSeconds] to the most-recent [ReadingEvent] for
@@ -209,8 +210,7 @@ class StorageService {
       sessionSeconds: old.sessionSeconds + addSeconds,
     );
     final prefs = await _prefs;
-    await prefs.setString(
-        _readingHistoryKey,
+    await prefs.setString(_readingHistoryKey,
         json.encode(existing.map((e) => e.toJson()).toList()));
   }
 
@@ -225,7 +225,8 @@ class StorageService {
     final entry = map[topic] as Map<String, dynamic>?;
     if (entry == null) return null;
     final cachedAt = entry['cachedAt'] as int? ?? 0;
-    if (DateTime.now().millisecondsSinceEpoch - cachedAt > _shelfCacheMaxAgeMs) {
+    if (DateTime.now().millisecondsSinceEpoch - cachedAt >
+        _shelfCacheMaxAgeMs) {
       return null;
     }
     final bookList = entry['books'] as List<dynamic>? ?? [];
@@ -237,8 +238,9 @@ class StorageService {
   Future<void> saveShelfCache(String topic, List<Book> books) async {
     final prefs = await _prefs;
     final raw = prefs.getString(_shelfCacheKey);
-    final map =
-        raw != null ? json.decode(raw) as Map<String, dynamic> : <String, dynamic>{};
+    final map = raw != null
+        ? json.decode(raw) as Map<String, dynamic>
+        : <String, dynamic>{};
     map[topic] = {
       'cachedAt': DateTime.now().millisecondsSinceEpoch,
       'books': books.map((b) => b.toJson()).toList(),
@@ -252,16 +254,53 @@ class StorageService {
     final prefs = await _prefs;
     final raw = prefs.getString(_suggestionsCacheKey);
     if (raw == null) return [];
-    final list = json.decode(raw) as List<dynamic>;
+    final decoded = json.decode(raw);
+    final list = decoded is Map<String, dynamic>
+        ? (decoded['groups'] as List<dynamic>? ?? const <dynamic>[])
+        : (decoded as List<dynamic>);
     return list
         .map((e) => SuggestionGroup.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  Future<int?> getSuggestionsCacheTimestamp() async {
+    final prefs = await _prefs;
+    final raw = prefs.getString(_suggestionsCacheKey);
+    if (raw == null) return null;
+    final decoded = json.decode(raw);
+    if (decoded is Map<String, dynamic>) {
+      return decoded['cachedAt'] as int?;
+    }
+    return null;
   }
 
   Future<void> saveCachedSuggestions(List<SuggestionGroup> groups) async {
     final prefs = await _prefs;
     await prefs.setString(
         _suggestionsCacheKey,
-        json.encode(groups.map((g) => g.toJson()).toList()));
+        json.encode({
+          'cachedAt': DateTime.now().millisecondsSinceEpoch,
+          'groups': groups.map((g) => g.toJson()).toList(),
+        }));
+  }
+
+  Future<Map<String, int>> getDiscoverMetrics() async {
+    final prefs = await _prefs;
+    final raw = prefs.getString(_discoverMetricsKey);
+    if (raw == null) return <String, int>{};
+    final map = json.decode(raw) as Map<String, dynamic>;
+    return map.map((k, v) => MapEntry(k, (v as num).toInt()));
+  }
+
+  Future<void> incrementDiscoverMetric(String key, {int by = 1}) async {
+    if (by <= 0) return;
+    final prefs = await _prefs;
+    final raw = prefs.getString(_discoverMetricsKey);
+    final map = raw == null
+        ? <String, dynamic>{}
+        : json.decode(raw) as Map<String, dynamic>;
+    final current = (map[key] as num?)?.toInt() ?? 0;
+    map[key] = current + by;
+    await prefs.setString(_discoverMetricsKey, json.encode(map));
   }
 }

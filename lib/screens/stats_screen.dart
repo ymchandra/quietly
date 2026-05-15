@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../providers/library_provider.dart';
 import '../providers/suggestions_provider.dart';
 import '../models/reading_history.dart';
+import '../widgets/skeleton_widget.dart';
 
 class StatsScreen extends StatelessWidget {
   const StatsScreen({super.key});
@@ -27,6 +28,7 @@ class StatsScreen extends StatelessWidget {
 
     final topGenres = _topGenres(history, 12);
     final topAuthors = _topAuthors(history, 8);
+    final loading = !suggestions.isInitialized;
 
     final hasAnyData =
         booksFinished > 0 || booksReading > 0 || history.isNotEmpty;
@@ -38,7 +40,9 @@ class StatsScreen extends StatelessWidget {
           style: GoogleFonts.lora(fontWeight: FontWeight.w600),
         ),
       ),
-      body: hasAnyData
+      body: loading
+          ? _buildLoading(context)
+          : hasAnyData
           ? _buildBody(
               context,
               booksFinished: booksFinished,
@@ -52,6 +56,29 @@ class StatsScreen extends StatelessWidget {
               history: history,
             )
           : _buildEmpty(context),
+    );
+  }
+
+  Widget _buildLoading(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+      children: [
+        const _SectionHeaderSkeleton(width: 110),
+        const SizedBox(height: 12),
+        const _OverviewGridSkeleton(),
+        const SizedBox(height: 28),
+        const _SectionHeaderSkeleton(width: 140),
+        const SizedBox(height: 12),
+        const _GenreChipsSkeleton(),
+        const SizedBox(height: 28),
+        const _SectionHeaderSkeleton(width: 122),
+        const SizedBox(height: 12),
+        const _AuthorListSkeleton(),
+        const SizedBox(height: 28),
+        const _SectionHeaderSkeleton(width: 130),
+        const SizedBox(height: 12),
+        const _RecentListSkeleton(),
+      ],
     );
   }
 
@@ -321,7 +348,7 @@ class _OverviewGrid extends StatelessWidget {
       crossAxisCount: 2,
       mainAxisSpacing: 12,
       crossAxisSpacing: 12,
-      childAspectRatio: 1.55,
+      childAspectRatio: 1.42,
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       children: items
@@ -330,6 +357,68 @@ class _OverviewGrid extends StatelessWidget {
           .map((e) => _StatTile(item: e.value, delay: e.key * 80))
           .toList(),
     );
+  }
+}
+
+class _SectionHeaderSkeleton extends StatelessWidget {
+  final double width;
+  const _SectionHeaderSkeleton({required this.width});
+
+  @override
+  Widget build(BuildContext context) {
+    return SkeletonWidget(width: width, height: 22, borderRadius: 6);
+  }
+}
+
+class _OverviewGridSkeleton extends StatelessWidget {
+  const _OverviewGridSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.count(
+      crossAxisCount: 2,
+      mainAxisSpacing: 12,
+      crossAxisSpacing: 12,
+      childAspectRatio: 1.42,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      children: List.generate(6, (i) => _StatTileSkeleton(delay: i * 60)),
+    );
+  }
+}
+
+class _StatTileSkeleton extends StatelessWidget {
+  final int delay;
+  const _StatTileSkeleton({required this.delay});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Theme.of(context).colorScheme.outline),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          const SkeletonWidget(width: 36, height: 36, borderRadius: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SkeletonWidget(width: delay % 2 == 0 ? 56 : 44, height: 26, borderRadius: 6),
+              const SizedBox(height: 8),
+              SkeletonWidget(width: 72, height: 12, borderRadius: 6),
+            ],
+          ),
+        ],
+      ),
+    )
+        .animate(delay: Duration(milliseconds: delay))
+        .fadeIn(duration: 220.ms)
+        .slideY(begin: 0.06, end: 0, duration: 220.ms, curve: Curves.easeOut);
   }
 }
 
@@ -412,6 +501,26 @@ class _GenreChips extends StatelessWidget {
           cs: cs,
         );
       }).toList(),
+    );
+  }
+}
+
+class _GenreChipsSkeleton extends StatelessWidget {
+  const _GenreChipsSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: const [
+        SkeletonWidget(width: 78, height: 34, borderRadius: 20),
+        SkeletonWidget(width: 64, height: 34, borderRadius: 20),
+        SkeletonWidget(width: 92, height: 34, borderRadius: 20),
+        SkeletonWidget(width: 70, height: 34, borderRadius: 20),
+        SkeletonWidget(width: 88, height: 34, borderRadius: 20),
+        SkeletonWidget(width: 60, height: 34, borderRadius: 20),
+      ],
     );
   }
 }
@@ -516,6 +625,53 @@ class _AuthorList extends StatelessWidget {
             cs: cs,
           );
         }).toList(),
+      ),
+    );
+  }
+}
+
+class _AuthorListSkeleton extends StatelessWidget {
+  const _AuthorListSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: cs.outline),
+      ),
+      child: Column(
+        children: List.generate(4, (index) {
+          final isLast = index == 3;
+          return Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  children: [
+                    const SkeletonWidget(width: 24, height: 18, borderRadius: 4),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: const [
+                          SkeletonWidget(width: 124, height: 14, borderRadius: 4),
+                          SizedBox(height: 8),
+                          SkeletonWidget(width: double.infinity, height: 4, borderRadius: 2),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    const SkeletonWidget(width: 44, height: 12, borderRadius: 4),
+                  ],
+                ),
+              ),
+              if (!isLast) Divider(height: 1, color: cs.outline),
+            ],
+          );
+        }),
       ),
     );
   }
@@ -685,6 +841,53 @@ class _RecentList extends StatelessWidget {
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
     ];
     return months[m - 1];
+  }
+}
+
+class _RecentListSkeleton extends StatelessWidget {
+  const _RecentListSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: cs.outline),
+      ),
+      child: Column(
+        children: List.generate(4, (index) {
+          final isLast = index == 3;
+          return Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  children: [
+                    const SkeletonWidget(width: 36, height: 36, borderRadius: 8),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SkeletonWidget(width: 164, height: 14, borderRadius: 4),
+                          SizedBox(height: 8),
+                          SkeletonWidget(width: 104, height: 12, borderRadius: 4),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const SkeletonWidget(width: 42, height: 12, borderRadius: 4),
+                  ],
+                ),
+              ),
+              if (!isLast) Divider(height: 1, color: cs.outline),
+            ],
+          );
+        }),
+      ),
+    );
   }
 }
 
