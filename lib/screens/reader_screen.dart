@@ -702,11 +702,145 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
+  Widget _buildLoadingScreen(Book? book) {
+    final cs = Theme.of(context).colorScheme;
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // Book Cover with Hero Animation
+                if (book?.coverUrl != null)
+                  Hero(
+                    tag: 'book-cover-${book!.id}',
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: CachedNetworkImage(
+                        imageUrl: book.coverUrl!,
+                        width: 100,
+                        height: 150,
+                        fit: BoxFit.cover,
+                        placeholder: (_, __) => Container(
+                          width: 100,
+                          height: 150,
+                          decoration: BoxDecoration(
+                            color: cs.secondary,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        errorWidget: (_, __, ___) => Container(
+                          width: 100,
+                          height: 150,
+                          decoration: BoxDecoration(
+                            color: cs.secondary,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          alignment: Alignment.center,
+                          child: PhosphorIcon(
+                            PhosphorIconsRegular.book,
+                            size: 40,
+                            color: cs.onSurface.withValues(alpha: 0.3),
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  Container(
+                    width: 100,
+                    height: 150,
+                    decoration: BoxDecoration(
+                      color: cs.secondary,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    alignment: Alignment.center,
+                    child: PhosphorIcon(
+                      PhosphorIconsRegular.book,
+                      size: 40,
+                      color: cs.onSurface.withValues(alpha: 0.3),
+                    ),
+                  ),
+                const SizedBox(height: 24),
+                // Book Title
+                if (book != null)
+                  Text(
+                    book.title,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.lora(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: cs.onSurface,
+                    ),
+                  )
+                else
+                  const SizedBox.shrink(),
+                const SizedBox(height: 6),
+                // Book Author
+                if (book != null)
+                  Text(
+                    book.authorName,
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: cs.onSurface.withValues(alpha: 0.65),
+                    ),
+                  )
+                else
+                  const SizedBox.shrink(),
+                const SizedBox(height: 32),
+                // Loading Indicator with Text
+                Column(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: SizedBox(
+                        height: 4,
+                        width: 60,
+                        child: LinearProgressIndicator(
+                          minHeight: 4,
+                          backgroundColor: cs.primary.withValues(alpha: 0.15),
+                          valueColor: AlwaysStoppedAnimation<Color>(cs.primary),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Preparing your book...',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: cs.onSurface.withValues(alpha: 0.7),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Loading content & setting up reader',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: cs.onSurface.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(
-          body: Center(child: CircularProgressIndicator()));
+      return _buildLoadingScreen(widget.initialBook);
     }
     if (_error != null) {
       final cs = Theme.of(context).colorScheme;
