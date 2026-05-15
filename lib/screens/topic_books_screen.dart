@@ -9,6 +9,7 @@ class TopicBooksScreen extends StatefulWidget {
   final String? topic;
   final String? queryType;
   final String? queryValue;
+  final bool readableOnly;
 
   const TopicBooksScreen({
     super.key,
@@ -16,6 +17,7 @@ class TopicBooksScreen extends StatefulWidget {
     this.topic,
     this.queryType,
     this.queryValue,
+    this.readableOnly = false,
   });
 
   @override
@@ -107,18 +109,22 @@ class _TopicBooksScreenState extends State<TopicBooksScreen> {
   Future<OpenLibraryResponse> _fetchPage(int page) {
     final type = widget.queryType;
     final value = widget.queryValue;
+    final ebookAccess = widget.readableOnly ? 'public_domain' : null;
     if (type == 'author' && value != null && value.trim().isNotEmpty) {
       final displayName = _formatAuthorName(value);
-      return _service.fetchBooks(search: displayName, page: page);
+      return _service.fetchBooks(
+          search: displayName, page: page, ebookAccess: ebookAccess);
     }
     if (type == 'subject' && value != null && value.trim().isNotEmpty) {
-      return _service.fetchBooks(topic: value, page: page);
+      return _service.fetchBooks(
+          topic: value, page: page, ebookAccess: ebookAccess);
     }
     final fallbackTopic = widget.topic;
     if (fallbackTopic != null && fallbackTopic.isNotEmpty) {
-      return _service.fetchBooks(topic: fallbackTopic, page: page);
+      return _service.fetchBooks(
+          topic: fallbackTopic, page: page, ebookAccess: ebookAccess);
     }
-    return _service.fetchBooks(topic: 'fiction', page: page);
+    return _service.fetchBooks(topic: 'fiction', page: page, ebookAccess: ebookAccess);
   }
 
   static String _formatAuthorName(String raw) {
@@ -127,15 +133,31 @@ class _TopicBooksScreenState extends State<TopicBooksScreen> {
   }
 
   List<Book> _filterForRoute(List<Book> books) {
+    var filtered = books;
+
+    // For the "Free to Read" route, keep only freely readable books client-side.
+    // The API filter (ebook_access=public_domain) is unreliable and can return
+    // borrowable or restricted books, so we enforce the same condition used by
+    // BookListRow to show the "Free to read" badge.
+    if (widget.readableOnly) {
+      filtered = filtered
+          .where((b) =>
+              b.ebookAccess != EbookAccess.borrowable &&
+              b.ebookAccess != EbookAccess.printDisabled &&
+              b.ebookAccess != EbookAccess.noEbook &&
+              b.hasFullText)
+          .toList();
+    }
+
     if (widget.queryType != 'author' ||
         widget.queryValue == null ||
         widget.queryValue!.trim().isEmpty) {
-      return books;
+      return filtered;
     }
     final rawName = widget.queryValue!.toLowerCase();
     final display = _formatAuthorName(widget.queryValue!).toLowerCase();
     final lastName = rawName.split(',').first.trim();
-    return books.where((book) {
+    return filtered.where((book) {
       return book.authors.any((a) {
         final aLower = a.name.toLowerCase();
         return aLower.contains(lastName) || display.contains(aLower);

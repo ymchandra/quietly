@@ -57,10 +57,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   int _sessionStartPage = 0;
   SuggestionsProvider? _suggestionsProvider;
 
-  static const double _charWidthRatio = 0.52;
   static const int _pageChunkSize = 10;
-  static const double _pageFillFactor = 0.85;
-  static const int _minCharsPerPage = 300;
   // Upper bound on pages counted per session to guard against stale state.
   static const int _maxPagesPerSession = 999999;
   // Padding applied to each text page — must stay in sync with the Container
@@ -97,7 +94,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (sp != null && _sessionStartMs != null) {
       final elapsed =
           (DateTime.now().millisecondsSinceEpoch - _sessionStartMs!) ~/ 1000;
-      final pages = (_currentPage - _sessionStartPage).clamp(0, _maxPagesPerSession);
+      final pages = (_currentPage - _sessionStartPage)
+          .clamp(0, _maxPagesPerSession)
+          .toInt();
       sp.recordSessionStats(
         widget.bookId,
         pagesRead: pages,
@@ -208,9 +207,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
               0;
       final startPage = (savedPercent * imageUrls.length)
           .floor()
-          .clamp(0, imageUrls.length - 1);
+          .clamp(0, imageUrls.length - 1)
+          .toInt();
       final initialCount =
-          (startPage + _pageChunkSize).clamp(_pageChunkSize, imageUrls.length);
+          (startPage + _pageChunkSize)
+              .clamp(_pageChunkSize, imageUrls.length)
+              .toInt();
       setState(() {
         _allPages = imageUrls;
         _pages = imageUrls.sublist(0, initialCount);
@@ -225,15 +227,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
 
-    // Text-based content.
     final size = MediaQuery.of(context).size;
     if (content.text == null || size.isEmpty) return;
     final settings =
         context.read<ReaderSettingsProvider>().forBook(widget.bookId);
 
     if (settings.scrollMode) {
-      // In continuous-scroll mode, skip page splitting entirely. Restore the
-      // saved scroll position after the first layout frame.
       final savedPercent =
           context.read<LibraryProvider>().getProgress(widget.bookId)?.percent ??
               0;
@@ -252,14 +251,23 @@ class _ReaderScreenState extends State<ReaderScreen> {
       textHeight: size.height - _pageTopPadding - _pageBottomPadding,
       fontSize: settings.fontSize,
       lineHeightFactor: settings.lineHeightValue,
+      fontFamily: _fontFamilyName(settings.fontFamily),
     );
     final savedPercent =
         context.read<LibraryProvider>().getProgress(widget.bookId)?.percent ??
             0;
-    final startPage =
-        (savedPercent * allPages.length).floor().clamp(0, allPages.length - 1);
-    final initialCount =
-        (startPage + _pageChunkSize).clamp(_pageChunkSize, allPages.length);
+    final startPage = allPages.isEmpty
+        ? 0
+        : (savedPercent * allPages.length)
+            .floor()
+            .clamp(0, allPages.length - 1)
+            .toInt();
+    final initialCount = allPages.length <= _pageChunkSize
+        ? allPages.length
+        : (startPage + _pageChunkSize > allPages.length
+            ? allPages.length
+            : startPage + _pageChunkSize);
+
     setState(() {
       _allPages = allPages;
       _pages = allPages.sublist(0, initialCount);
@@ -275,8 +283,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   void _loadMorePages() {
     if (_pages.length >= _allPages.length) return;
-    final nextEnd =
-        (_pages.length + _pageChunkSize).clamp(0, _allPages.length);
+    final nextEnd = (_pages.length + _pageChunkSize)
+        .clamp(0, _allPages.length)
+        .toInt();
     setState(() {
       _pages = _allPages.sublist(0, nextEnd);
     });
@@ -288,62 +297,206 @@ class _ReaderScreenState extends State<ReaderScreen> {
     required double textHeight,
     required double fontSize,
     required double lineHeightFactor,
+    required String? fontFamily,
   }) {
-    final lineHeight = fontSize * lineHeightFactor;
-    final linesPerPage = (textHeight / lineHeight).floor();
-    final charsPerLine = (textWidth / (fontSize * _charWidthRatio)).floor();
-    final cpp = (charsPerLine * linesPerPage * _pageFillFactor)
-        .floor()
-        .clamp(_minCharsPerPage, 9999);
+    final normalized = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n').trim();
+    if (normalized.isEmpty) return [''];
 
-    final paragraphs = text.split('\n\n');
+    final paragraphs = normalized.split(RegExp(r'\n{2,}'));
     final pages = <String>[];
-    final buffer = StringBuffer();
-    int currentChars = 0;
+    var current = '';
 
-    for (final para in paragraphs) {
-      if (para.trim().isEmpty) continue;
-      if (currentChars + para.length + 2 <= cpp) {
-        if (buffer.isNotEmpty) buffer.write('\n\n');
-        buffer.write(para);
-        currentChars += para.length + 2;
-      } else if (para.length > cpp) {
-        if (buffer.isNotEmpty) {
-          pages.add(buffer.toString());
-          buffer.clear();
-          currentChars = 0;
-        }
-        final words = para.split(' ');
-        final wb = StringBuffer();
-        int wc = 0;
-        for (final word in words) {
-          if (wc + word.length + 1 > cpp && wb.isNotEmpty) {
-            pages.add(wb.toString());
-            wb.clear();
-            wc = 0;
-          }
-          if (wb.isNotEmpty) {
-            wb.write(' ');
-            wc++;
-          }
-          wb.write(word);
-          wc += word.length;
-        }
-        if (wb.isNotEmpty) {
-          buffer.write(wb.toString());
-          currentChars = wb.length;
-        }
-      } else {
-        if (buffer.isNotEmpty) {
-          pages.add(buffer.toString());
-          buffer.clear();
-        }
-        buffer.write(para);
-        currentChars = para.length;
+    for (final rawPara in paragraphs) {
+      final para = rawPara.trim();
+      if (para.isEmpty) continue;
+
+      final candidate = current.isEmpty ? para : '$current\n\n$para';
+      if (_pageTextFits(
+        candidate,
+        textWidth: textWidth,
+        textHeight: textHeight,
+        fontSize: fontSize,
+        lineHeightFactor: lineHeightFactor,
+        fontFamily: fontFamily,
+      )) {
+        current = candidate;
+        continue;
       }
+
+      if (current.isNotEmpty) {
+        pages.add(current);
+        current = '';
+      }
+
+      if (_pageTextFits(
+        para,
+        textWidth: textWidth,
+        textHeight: textHeight,
+        fontSize: fontSize,
+        lineHeightFactor: lineHeightFactor,
+        fontFamily: fontFamily,
+      )) {
+        current = para;
+        continue;
+      }
+
+      pages.addAll(_splitParagraphIntoPages(
+        para,
+        textWidth: textWidth,
+        textHeight: textHeight,
+        fontSize: fontSize,
+        lineHeightFactor: lineHeightFactor,
+        fontFamily: fontFamily,
+      ));
     }
-    if (buffer.isNotEmpty) pages.add(buffer.toString());
+
+    if (current.isNotEmpty) pages.add(current);
     return pages.isEmpty ? [''] : pages;
+  }
+
+  List<String> _splitParagraphIntoPages(
+    String paragraph, {
+    required double textWidth,
+    required double textHeight,
+    required double fontSize,
+    required double lineHeightFactor,
+    required String? fontFamily,
+  }) {
+    final words = paragraph
+        .split(RegExp(r'\s+'))
+        .where((word) => word.trim().isNotEmpty)
+        .toList();
+    if (words.isEmpty) return const [];
+
+    final pages = <String>[];
+    var start = 0;
+
+    while (start < words.length) {
+      var low = start + 1;
+      var high = words.length;
+      var best = start + 1;
+
+      while (low <= high) {
+        final mid = (low + high) >> 1;
+        final candidate = words.sublist(start, mid).join(' ');
+        if (_pageTextFits(
+          candidate,
+          textWidth: textWidth,
+          textHeight: textHeight,
+          fontSize: fontSize,
+          lineHeightFactor: lineHeightFactor,
+          fontFamily: fontFamily,
+        )) {
+          best = mid;
+          low = mid + 1;
+        } else {
+          high = mid - 1;
+        }
+      }
+
+      if (best <= start) best = start + 1;
+      final chunk = words.sublist(start, best).join(' ');
+
+      if (_pageTextFits(
+        chunk,
+        textWidth: textWidth,
+        textHeight: textHeight,
+        fontSize: fontSize,
+        lineHeightFactor: lineHeightFactor,
+        fontFamily: fontFamily,
+      )) {
+        pages.add(chunk);
+        start = best;
+        continue;
+      }
+
+      pages.addAll(_splitLongToken(
+        words[start],
+        textWidth: textWidth,
+        textHeight: textHeight,
+        fontSize: fontSize,
+        lineHeightFactor: lineHeightFactor,
+        fontFamily: fontFamily,
+      ));
+      start += 1;
+    }
+
+    return pages;
+  }
+
+  List<String> _splitLongToken(
+    String token, {
+    required double textWidth,
+    required double textHeight,
+    required double fontSize,
+    required double lineHeightFactor,
+    required String? fontFamily,
+  }) {
+    final pages = <String>[];
+    var start = 0;
+
+    while (start < token.length) {
+      var low = start + 1;
+      var high = token.length;
+      var best = start + 1;
+
+      while (low <= high) {
+        final mid = (low + high) >> 1;
+        final candidate = token.substring(start, mid);
+        if (_pageTextFits(
+          candidate,
+          textWidth: textWidth,
+          textHeight: textHeight,
+          fontSize: fontSize,
+          lineHeightFactor: lineHeightFactor,
+          fontFamily: fontFamily,
+        )) {
+          best = mid;
+          low = mid + 1;
+        } else {
+          high = mid - 1;
+        }
+      }
+
+      if (best <= start) best = start + 1;
+      pages.add(token.substring(start, best));
+      start = best;
+    }
+
+    return pages;
+  }
+
+  bool _pageTextFits(
+    String text, {
+    required double textWidth,
+    required double textHeight,
+    required double fontSize,
+    required double lineHeightFactor,
+    required String? fontFamily,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          fontFamily: fontFamily,
+          fontSize: fontSize,
+          height: lineHeightFactor,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.justify,
+      maxLines: null,
+    )..layout(maxWidth: textWidth);
+    return painter.height <= (textHeight - 2.0);
+  }
+
+  String? _fontFamilyName(FontFamily family) {
+    switch (family) {
+      case FontFamily.lora:
+        return GoogleFonts.lora().fontFamily;
+      case FontFamily.inter:
+        return GoogleFonts.inter().fontFamily;
+    }
   }
 
   void _restoreScrollPosition(double savedPercent) {

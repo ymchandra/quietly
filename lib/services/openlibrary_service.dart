@@ -62,6 +62,7 @@ class OpenLibraryService {
     String? search,
     String languages = 'en',
     int page = 1,
+    String? ebookAccess,
     void Function(OpenLibraryDebugSnapshot snapshot)? onDebug,
   }) async {
     final uri = _buildListUri(
@@ -69,6 +70,7 @@ class OpenLibraryService {
       search: search,
       languages: languages,
       page: page,
+      ebookAccess: ebookAccess,
     );
     http.Response? resp;
     var emitted = false;
@@ -243,7 +245,7 @@ class OpenLibraryService {
             continue;
           }
 
-          final raw = utf8.decode(resp.bodyBytes, allowMalformed: true);
+          final raw = _decodeTextBytes(resp.bodyBytes);
 
           // A plain-text URL that returns an HTML page is almost certainly an
           // error page (e.g. archive.org 404).  Detect and handle it.
@@ -260,9 +262,9 @@ class OpenLibraryService {
             processedText = cleanGutenbergText(raw);
           }
 
-          // Skip results that are too short to be genuine book content
-          // (likely an error page or an empty/stub file).
-          if (processedText.length < 500) {
+          // Skip results that are too short or too noisy to be genuine book
+          // content (likely an error page, OCR garbage, or an empty/stub file).
+          if (processedText.length < 500 || !_looksLikeReadableText(processedText)) {
             onDebug?.call(
               OpenLibraryDebugSnapshot(
                 requestUrl: url,
@@ -271,8 +273,9 @@ class OpenLibraryService {
                 bodyLength: resp.bodyBytes.length,
                 bodyPreview: processedText.isEmpty ? '(empty)' : processedText,
                 resultCount: null,
-                error:
-                    'Insufficient content (${processedText.length} chars after cleaning)',
+                error: processedText.length < 500
+                    ? 'Insufficient content (${processedText.length} chars after cleaning)'
+                    : 'Low-quality text source (likely OCR or encoding noise)',
                 timestamp: DateTime.now(),
               ),
             );
@@ -325,15 +328,62 @@ class OpenLibraryService {
         'The available sources may be image-only or temporarily unavailable.');
   }
 
+  String _decodeTextBytes(Uint8List bytes) {
+    final candidates = <String>[];
+    try {
+      candidates.add(utf8.decode(bytes, allowMalformed: false));
+    } catch (_) {}
+    try {
+      candidates.add(latin1.decode(bytes));
+    } catch (_) {}
+    candidates.add(utf8.decode(bytes, allowMalformed: true));
+
+    final unique = <String>[];
+    for (final candidate in candidates) {
+      if (candidate.isNotEmpty && !unique.contains(candidate)) {
+        unique.add(candidate);
+      }
+    }
+    unique.sort((a, b) => _textQualityScore(b).compareTo(_textQualityScore(a)));
+    return unique.isNotEmpty ? unique.first : '';
+  }
+
+  double _textQualityScore(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return double.negativeInfinity;
+    final wordMatches = RegExp(r"[A-Za-z][A-Za-z'\-]{2,}").allMatches(trimmed);
+    final alphaCount = RegExp(r'[A-Za-z]').allMatches(trimmed).length;
+    final replacementCount = RegExp(r'\uFFFD').allMatches(trimmed).length;
+    final controlCount = RegExp(r'[\x00-\x1F]').allMatches(trimmed).length;
+    final shortTokens = trimmed
+        .split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty && w.length <= 2)
+        .length;
+    return wordMatches.length * 3 + alphaCount / 25 - replacementCount * 6 - controlCount * 4 - shortTokens * 0.3;
+  }
+
+  bool _looksLikeReadableText(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return false;
+    final words = trimmed.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    if (words.length < 50) return false;
+    final readableWords = words.where((w) => w.length >= 3).length;
+    final letterCount = RegExp(r'[A-Za-z]').allMatches(trimmed).length;
+    final symbolCount = RegExp(r'[^A-Za-z0-9\s\.,;:!?()\[\]\-]').allMatches(trimmed).length;
+    final readableRatio = readableWords / words.length;
+    final letterRatio = letterCount / trimmed.length;
+    return readableRatio >= 0.55 && letterRatio >= 0.35 && symbolCount / trimmed.length <= 0.15;
+  }
+
   /// Fetches the IIIF manifest for the given archive.org item and returns an
   /// ordered list of page image URLs, or an empty list if unavailable.
   Future<List<String>> _fetchIIIFImagePages(
     String iaId, {
     void Function(OpenLibraryDebugSnapshot)? onDebug,
   }) async {
-    // The '\$' is a literal '$' that is part of archive.org's IIIF URL format:
-    // https://iiif.archive.org/iiif/{item_id}$/manifest.json
-    final manifestUrl = 'https://iiif.archive.org/iiif/$iaId\$/manifest.json';
+    // Archive.org IIIF manifest URL format:
+    // https://iiif.archive.org/iiif/{item_id}/manifest.json
+    final manifestUrl = 'https://iiif.archive.org/iiif/$iaId/manifest.json';
     try {
       final resp =
           await _getWithRetry(Uri.parse(manifestUrl), timeout: _timeout);
@@ -418,8 +468,9 @@ class OpenLibraryService {
     if (stored != null && stored.isNotEmpty) {
       return stored
           .split('|')
-          .where((s) => s.trim().isNotEmpty)
-          .map((s) => s.trim())
+          .map(_normalizeIaId)
+          .whereType<String>()
+          .toSet()
           .toList();
     }
     // Fallback: derive IDs from text_sources URLs
@@ -429,23 +480,107 @@ class OpenLibraryService {
     for (final url in textSources.split('|')) {
       final match =
           RegExp(r'archive\.org/download/([^/]+)/').firstMatch(url.trim());
-      if (match != null) iaIds.add(match.group(1)!);
+      if (match != null) {
+        final normalized = _normalizeIaId(match.group(1)!);
+        if (normalized != null) iaIds.add(normalized);
+      }
     }
     return iaIds.toList();
   }
 
-  /// Loads book content — first as plain text, falling back to scanned image
-  /// pages when text is unavailable. Throws if neither is accessible.
+  /// Loads book content — first as scanned image pages, falling back to plain
+  /// text when no image pages are available. Throws if neither is accessible.
   Future<BookContent> fetchBookContent(
     Book book, {
     void Function(OpenLibraryDebugSnapshot)? onDebug,
   }) async {
-    // Try text first.
+    // Try scanned image pages from archive.org via IIIF first.
+    final iaIds = _getIaIds(book).toSet();
+    if (iaIds.isEmpty) {
+      final discovered = await _discoverIaIds(book);
+      iaIds.addAll(discovered);
+      onDebug?.call(OpenLibraryDebugSnapshot(
+        requestUrl: 'openlibrary://book/${book.id}/images/discovered-ia-ids',
+        statusCode: null,
+        success: discovered.isNotEmpty,
+        bodyLength: discovered.join('\n').length,
+        bodyPreview: discovered.isEmpty ? '(none)' : discovered.join('\n'),
+        resultCount: discovered.length,
+        error: discovered.isEmpty
+            ? 'No additional archive identifiers discovered.'
+            : null,
+        timestamp: DateTime.now(),
+      ));
+    }
+    Object? lastImageError;
+    for (final iaId in iaIds) {
+      final normalizedIaId = _normalizeIaId(iaId);
+      if (normalizedIaId == null) {
+        onDebug?.call(OpenLibraryDebugSnapshot(
+          requestUrl: 'openlibrary://book/${book.id}/images/skip-invalid-id',
+          statusCode: null,
+          success: false,
+          bodyLength: 0,
+          bodyPreview: iaId,
+          resultCount: 0,
+          error: 'Invalid archive identifier',
+          timestamp: DateTime.now(),
+        ));
+        continue;
+      }
+      try {
+        final pages = await _fetchIIIFImagePages(normalizedIaId, onDebug: onDebug);
+        if (pages.isNotEmpty) return BookContent.images(pages);
+      } catch (e) {
+        lastImageError = e;
+      }
+    }
+
+    // If initial identifiers did not produce image pages, make one best-effort
+    // discovery pass from work editions and retry any newly found IDs.
+    final discoveredAfterMiss = await _discoverIaIds(book);
+    final retryIds = discoveredAfterMiss.where((id) => !iaIds.contains(id)).toList();
+    if (retryIds.isNotEmpty) {
+      onDebug?.call(OpenLibraryDebugSnapshot(
+        requestUrl: 'openlibrary://book/${book.id}/images/retry-with-discovered-ids',
+        statusCode: null,
+        success: true,
+        bodyLength: retryIds.join('\n').length,
+        bodyPreview: retryIds.join('\n'),
+        resultCount: retryIds.length,
+        error: null,
+        timestamp: DateTime.now(),
+      ));
+      for (final iaId in retryIds) {
+        final normalizedIaId = _normalizeIaId(iaId);
+        if (normalizedIaId == null) continue;
+        try {
+          final pages = await _fetchIIIFImagePages(normalizedIaId, onDebug: onDebug);
+          if (pages.isNotEmpty) return BookContent.images(pages);
+        } catch (e) {
+          lastImageError = e;
+        }
+      }
+    }
+
+    onDebug?.call(OpenLibraryDebugSnapshot(
+      requestUrl: 'openlibrary://book/${book.id}/images-unavailable',
+      statusCode: null,
+      success: false,
+      bodyLength: 0,
+      bodyPreview: '',
+      resultCount: 0,
+      error: iaIds.isEmpty
+          ? 'No archive identifiers found; falling back to text.'
+          : 'No image pages found; falling back to text.',
+      timestamp: DateTime.now(),
+    ));
+
+    // Fallback to text.
     try {
       final text = await fetchBookText(book, onDebug: onDebug);
       return BookContent.text(text);
     } catch (e) {
-      // Text not available; record and proceed to image fallback.
       onDebug?.call(OpenLibraryDebugSnapshot(
         requestUrl: 'openlibrary://book/${book.id}/text-fetch-failed',
         statusCode: null,
@@ -453,21 +588,15 @@ class OpenLibraryService {
         bodyLength: 0,
         bodyPreview: '',
         resultCount: 0,
-        error: 'Text unavailable, trying image pages: $e',
+        error: 'Text unavailable after image fallback: $e',
         timestamp: DateTime.now(),
       ));
     }
 
-    // Try scanned image pages from archive.org via IIIF.
-    final iaIds = _getIaIds(book);
-    for (final iaId in iaIds) {
-      final pages = await _fetchIIIFImagePages(iaId, onDebug: onDebug);
-      if (pages.isNotEmpty) return BookContent.images(pages);
-    }
-
     throw Exception(
       'No readable content available for this book. '
-      'The edition may be restricted or temporarily unavailable.',
+      'The edition may be restricted or temporarily unavailable.'
+      '${lastImageError != null ? ' (image error: $lastImageError)' : ''}',
     );
   }
 
@@ -476,6 +605,7 @@ class OpenLibraryService {
     String? search,
     required String languages,
     required int page,
+    String? ebookAccess,
   }) {
     if (search != null && search.trim().isNotEmpty) {
       return Uri.parse('$_base/search.json').replace(queryParameters: {
@@ -484,6 +614,7 @@ class OpenLibraryService {
         'page': page.toString(),
         'limit': _pageSize.toString(),
         'has_fulltext': 'true',
+        if (ebookAccess != null) 'ebook_access': ebookAccess,
       });
     }
     final normalizedTopic = (topic == null || topic.isEmpty)
@@ -495,6 +626,7 @@ class OpenLibraryService {
       'page': page.toString(),
       'limit': _pageSize.toString(),
       'has_fulltext': 'true',
+      if (ebookAccess != null) 'ebook_access': ebookAccess,
     });
   }
 
@@ -689,7 +821,40 @@ class OpenLibraryService {
     if (ia is! List || ia.isEmpty) return const [];
     // Limit to 3 identifiers: each may trigger a IIIF request, so we
     // avoid excessive network calls while still covering alternate editions.
-    return ia.take(3).map((id) => id.toString()).toList();
+    final ids = <String>[];
+    for (final id in ia.take(3)) {
+      final normalized = _normalizeIaId(id.toString());
+      if (normalized != null) ids.add(normalized);
+    }
+    return ids.toSet().toList();
+  }
+
+  Future<List<String>> _discoverIaIds(Book book) async {
+    final ids = <String>{};
+    final workKey = _normalizeWorkKey(book.formats['openlibrary/work_key']) ??
+        '/works/OL${book.id}W';
+    final editionsUri =
+        Uri.parse('$_base$workKey/editions.json').replace(queryParameters: {
+      'limit': '50',
+    });
+    try {
+      final resp = await _getWithRetry(editionsUri, timeout: _timeout);
+      if (resp.statusCode != 200) return const [];
+      final data = json.decode(resp.body) as Map<String, dynamic>;
+      final entries = (data['entries'] as List<dynamic>? ?? []);
+      for (final entry in entries.take(50)) {
+        if (entry is! Map<String, dynamic>) continue;
+        ids.addAll(_collectIaIds(entry));
+        final ocaid = entry['ocaid'];
+        if (ocaid is String) {
+          final normalized = _normalizeIaId(ocaid);
+          if (normalized != null) ids.add(normalized);
+        }
+      }
+    } catch (_) {
+      // Best-effort only; caller handles image fallback semantics.
+    }
+    return ids.toList();
   }
 
   List<String> _collectTextSources(Map<String, dynamic> source) {
@@ -697,7 +862,8 @@ class OpenLibraryService {
     final ia = source['ia'];
     if (ia is List && ia.isNotEmpty) {
       for (final id in ia.take(3)) {
-        final iaId = id.toString();
+        final iaId = _normalizeIaId(id.toString());
+        if (iaId == null) continue;
         results.add('https://archive.org/download/$iaId/${iaId}_djvu.txt');
         results.add('https://archive.org/download/$iaId/$iaId.txt');
       }
@@ -728,6 +894,30 @@ class OpenLibraryService {
       if (parsed != null) return parsed;
     }
     return workKey.hashCode.abs();
+  }
+
+  /// Normalizes raw archive.org item IDs into a IIIF-safe identifier.
+  /// Accepts raw IDs, archive URLs (`/details/` or `/download/`), trims
+  /// query/fragment/trailing `$`, and validates allowed characters.
+  String? _normalizeIaId(String raw) {
+    var value = raw.trim();
+    if (value.isEmpty) return null;
+
+    final urlMatch = RegExp(r'archive\.org/(?:details|download)/([^/?#]+)', caseSensitive: false)
+        .firstMatch(value);
+    if (urlMatch != null) {
+      value = urlMatch.group(1) ?? value;
+    }
+
+    value = value.split('?').first.split('#').first;
+    value = value.replaceAll(r'$', '').trim();
+    value = value.replaceFirst(RegExp(r'^/+'), '');
+    value = value.split('/').first;
+
+    if (value.isEmpty) return null;
+    if (!RegExp(r'^[A-Za-z0-9._-]+$').hasMatch(value)) return null;
+    if (value.length < 3) return null;
+    return value;
   }
 
   String _openLibraryLang(String code) {

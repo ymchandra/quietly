@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -49,6 +50,13 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   final Map<String, OpenLibraryDebugSnapshot> _shelfDebug = {};
   OpenLibraryDebugSnapshot? _searchDebug;
   bool _showDebugPanel = false;
+  Timer? _searchDebounce;
+  static const _searchDebounceMs = 500;
+
+  // Readable books shelf
+  List<Book> _readableBooks = [];
+  bool _readableBooksLoading = false;
+  String? _readableBooksError;
 
   List<Map<String, String>> _topics = [];
   bool _initialized = false;
@@ -70,11 +78,12 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     for (final t in initialTopics) {
       _requestedTopics.add(t['topic']!);
     }
-    final results = await Future.wait(
-      initialTopics.map((t) => _loadShelf(t['topic']!)),
-    );
+    final results = await Future.wait([
+      ...initialTopics.map((t) => _loadShelf(t['topic']!)),
+      _loadReadableShelf(),
+    ]);
     if (!mounted) return;
-    if (results.every((ok) => !ok)) {
+    if (results.take(initialTopics.length).every((ok) => !ok)) {
       setState(() {
         _catalogError =
             'Could not load books. Check your internet and pull to retry.';
@@ -91,11 +100,12 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     for (final t in _topics) {
       _requestedTopics.add(t['topic']!);
     }
-    final results = await Future.wait(
-      _topics.map((t) => _loadShelf(t['topic']!)),
-    );
+    final results = await Future.wait([
+      ..._topics.map((t) => _loadShelf(t['topic']!)),
+      _loadReadableShelf(),
+    ]);
     if (!mounted) return;
-    if (results.every((ok) => !ok)) {
+    if (results.take(_topics.length).every((ok) => !ok)) {
       setState(() {
         _catalogError =
             'Could not load books. Check your internet and pull to retry.';
@@ -151,7 +161,72 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     }
   }
 
-  Future<void> _onSearch(String q) async {
+  Future<bool> _loadReadableShelf() async {
+    final cached = await _storage.getShelfCache('readable');
+    if (cached != null && cached.isNotEmpty && mounted) {
+      setState(() {
+        _readableBooks = cached
+            .where(_isFreeToRead)
+            .take(_previewCount)
+            .toList();
+        _readableBooksLoading = false;
+        _readableBooksError = null;
+      });
+    } else {
+      setState(() {
+        _readableBooksLoading = true;
+        _readableBooksError = null;
+      });
+    }
+
+    try {
+      final resp = await _service.fetchBooks(
+        topic: 'fiction',
+        ebookAccess: 'public_domain',
+      );
+      if (mounted) {
+        final books = resp.results
+            .where(_isFreeToRead)
+            .take(_previewCount)
+            .toList();
+        setState(() {
+          _readableBooks = books;
+          _readableBooksLoading = false;
+        });
+        _storage.saveShelfCache('readable', books);
+      }
+      return true;
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _readableBooksLoading = false;
+          if (_readableBooks.isEmpty) {
+            _readableBooksError = 'Could not load this shelf.';
+          }
+        });
+      }
+      return _readableBooks.isNotEmpty;
+    }
+  }
+
+  void _onSearchChanged(String q) {
+    _searchDebounce?.cancel();
+    if (q.isEmpty) {
+      _executeSearch('');
+      return;
+    }
+    _searchDebounce = Timer(
+      const Duration(milliseconds: _searchDebounceMs),
+      () => _executeSearch(q),
+    );
+  }
+
+  void _onSearchSubmitted(String q) {
+    _searchDebounce?.cancel();
+    _executeSearch(q);
+  }
+
+  Future<void> _executeSearch(String q) async {
     setState(() {
       _query = q;
       _searching = q.isNotEmpty;
@@ -190,6 +265,12 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         });
       }
     }
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    super.dispose();
   }
 
   @override
@@ -233,7 +314,10 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: SearchBarWidget(onChanged: _onSearch),
+              child: SearchBarWidget(
+                onChanged: _onSearchChanged,
+                onSubmitted: _onSearchSubmitted,
+              ),
             ),
             if (kDebugMode && _showDebugPanel) _buildDebugPanel(),
             const SizedBox(height: 8),
@@ -292,15 +376,23 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     return ListView.builder(
       padding: const EdgeInsets.only(bottom: 16),
       physics: const AlwaysScrollableScrollPhysics(),
-      // Extra items for the "For You" header + suggestion shelves (or shimmer).
+      // Extra items for the "For You" header + suggestion shelves (or shimmer)
+      // + 1 for the "Free to Read" shelf.
       itemCount: _topics.length +
           (showSuggestions
               ? 1 + suggestionGroups.length
               : showSuggestionsLoading
                   ? 2
-                  : 0),
+                  : 0) +
+          1, // readable shelf
       itemBuilder: (context, i) {
         // ── For You section ────────────────────────────────────────────────
+        final forYouCount = showSuggestions
+            ? 1 + suggestionGroups.length
+            : showSuggestionsLoading
+                ? 2
+                : 0;
+
         if (showSuggestions || showSuggestionsLoading) {
           if (i == 0) {
             return _buildForYouHeader();
@@ -311,14 +403,17 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           if (showSuggestions && i <= suggestionGroups.length) {
             return _buildSuggestionShelf(suggestionGroups[i - 1], suggestions);
           }
-          // Offset the raw ListView index to get the _topics index.
-          // When showing suggestions: offset = 1 (header) + N (suggestion shelves).
-          // When showing loading skeleton: offset = 2 (header + skeleton shelf).
-          i -= (showSuggestions ? 1 + suggestionGroups.length : 2);
+        }
+
+        // ── Free to Read shelf ─────────────────────────────────────────────
+        if (i == forYouCount) {
+          return _buildReadableShelf();
         }
 
         // ── Genre shelves ──────────────────────────────────────────────────
-        final t = _topics[i];
+        // Offset = forYouCount + 1 (for the readable shelf).
+        final topicIndex = i - forYouCount - 1;
+        final t = _topics[topicIndex];
         final topic = t['topic']!;
         final label = t['label']!;
         if (!_requestedTopics.contains(topic)) {
@@ -576,6 +671,107 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     );
   }
 
+  Widget _buildReadableShelf() {
+    final cs = Theme.of(context).colorScheme;
+    const label = 'Free to Read';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+          child: Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: cs.primary.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: PhosphorIcon(
+                    PhosphorIconsRegular.bookOpen,
+                    size: 16,
+                    color: cs.primary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  style: GoogleFonts.lora(
+                      fontSize: 18, fontWeight: FontWeight.w600),
+                ),
+              ),
+              TextButton(
+                onPressed: () {
+                  _storage.incrementDiscoverMetric(
+                      'discover_show_all_readable_tap');
+                  context.push('/discover/readable');
+                },
+                child: const Text('Show all'),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: _shelfHeight,
+          child: _readableBooksLoading
+              ? _shelfSkeleton()
+              : _readableBooksError != null
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            _readableBooksError!,
+                            style: TextStyle(
+                                color: Theme.of(context).colorScheme.error),
+                          ),
+                          const SizedBox(height: 6),
+                          TextButton(
+                            onPressed: _loadReadableShelf,
+                            child: const Text('Retry shelf'),
+                          ),
+                        ],
+                      ),
+                    )
+                  : _readableBooks.isEmpty
+                      ? const Center(
+                          child: Text('No readable books available yet'))
+                      : ListView.builder(
+                          scrollDirection: Axis.horizontal,
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 16),
+                          itemCount: _readableBooks.length + 1,
+                          itemBuilder: (ctx, j) {
+                            if (j == _readableBooks.length) {
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 12),
+                                child: _ShowAllCard(
+                                  onTap: () {
+                                    _storage.incrementDiscoverMetric(
+                                        'discover_show_all_readable_tap');
+                                    context.push('/discover/readable');
+                                  },
+                                ),
+                              );
+                            }
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 12),
+                              child: BookCard(
+                                book: _readableBooks[j],
+                                animationIndex: j,
+                              ),
+                            );
+                          },
+                        ),
+        ),
+      ],
+    );
+  }
+
   Widget _shelfSkeleton() {
     return ListView.builder(
       scrollDirection: Axis.horizontal,
@@ -705,6 +901,15 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       ),
     );
   }
+
+  /// Mirrors the "Free to read" condition used in [BookListRow]:
+  /// a book is freely readable when it is not borrowable/print-disabled/no-ebook
+  /// AND has a full-text source available.
+  static bool _isFreeToRead(Book b) =>
+      b.ebookAccess != EbookAccess.borrowable &&
+      b.ebookAccess != EbookAccess.printDisabled &&
+      b.ebookAccess != EbookAccess.noEbook &&
+      b.hasFullText;
 
   List<Book> _dedupSuggestionBooks(List<Book> suggestions) {
     final staticIds = <int>{

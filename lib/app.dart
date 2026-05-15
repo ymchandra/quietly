@@ -113,6 +113,15 @@ class _QuietlyAppState extends State<QuietlyApp> {
         ),
         GoRoute(
           parentNavigatorKey: _rootNavigatorKey,
+          path: '/discover/readable',
+          builder: (_, __) => const TopicBooksScreen(
+            label: 'Free to Read',
+            topic: 'fiction',
+            readableOnly: true,
+          ),
+        ),
+        GoRoute(
+          parentNavigatorKey: _rootNavigatorKey,
           path: '/stats',
           builder: (_, __) => const StatsScreen(),
         ),

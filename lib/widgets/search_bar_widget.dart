@@ -1,30 +1,29 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 class SearchBarWidget extends StatefulWidget {
   final void Function(String) onChanged;
-  const SearchBarWidget({super.key, required this.onChanged});
+  final void Function(String)? onSubmitted;
+  const SearchBarWidget({
+    super.key,
+    required this.onChanged,
+    this.onSubmitted,
+  });
   @override
   State<SearchBarWidget> createState() => _SearchBarWidgetState();
 }
 
 class _SearchBarWidgetState extends State<SearchBarWidget> {
   final _controller = TextEditingController();
-  Timer? _debounce;
 
   @override
   void dispose() {
-    _debounce?.cancel();
     _controller.dispose();
     super.dispose();
   }
 
   void _onChanged(String v) {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), () {
-      widget.onChanged(v);
-    });
+    widget.onChanged(v);
     setState(() {});
   }
 
@@ -47,6 +46,7 @@ class _SearchBarWidgetState extends State<SearchBarWidget> {
             child: TextField(
               controller: _controller,
               onChanged: _onChanged,
+              onSubmitted: widget.onSubmitted,
               decoration: const InputDecoration(
                 hintText: 'Search books or authors...',
                 border: InputBorder.none,
