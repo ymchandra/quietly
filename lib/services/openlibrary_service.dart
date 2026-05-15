@@ -1,29 +1,47 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
+import 'package:archive/archive.dart';
+import 'package:epubx/epubx.dart';
 import 'package:http/http.dart' as http;
+import 'package:syncfusion_flutter_pdf/pdf.dart';
 import '../models/book.dart';
 
-/// Represents book content that can be read in the reader — either plain text
-/// or an ordered list of image page URLs (e.g. scanned pages from archive.org).
+/// Represents book content that can be read in the reader.
 class BookContent {
-  /// Plain text of the book. Non-null when [isImageBased] is false.
+  /// Plain text of the book. Used only for legacy text sources.
   final String? text;
 
-  /// Ordered list of image URLs, one per scanned page. Non-null when
-  /// [isImageBased] is true.
-  final List<String>? images;
+  /// Raw EPUB bytes. Non-null when [isEpubBased] is true.
+  final Uint8List? epubBytes;
+
+  /// The URL used to fetch [epubBytes].
+  final String? epubSourceUrl;
+
+  /// Ordered HTML strings extracted from the EPUB spine.
+  /// Non-null when [isHtmlBased] is true.
+  final List<String>? htmlSpine;
 
   const BookContent.text(String text)
       : text = text,
-        images = null;
+        epubBytes = null,
+        epubSourceUrl = null,
+        htmlSpine = null;
 
-  const BookContent.images(List<String> images)
-      : images = images,
-        text = null;
+  const BookContent.epub(Uint8List bytes, {this.epubSourceUrl})
+      : epubBytes = bytes,
+        text = null,
+        htmlSpine = null;
 
-  bool get isImageBased => images != null;
+  BookContent.html(List<String> spine, {this.epubSourceUrl})
+      : htmlSpine = List.unmodifiable(spine),
+        text = null,
+        epubBytes = null;
+
+  bool get isEpubBased => epubBytes != null;
+  bool get isHtmlBased => htmlSpine != null && htmlSpine!.isNotEmpty;
 }
 
 class OpenLibraryDebugSnapshot {
@@ -52,7 +70,11 @@ class OpenLibraryService {
   static const _base = 'https://openlibrary.org';
   static const _timeout = Duration(seconds: 15);
   static const _textTimeout = Duration(seconds: 30);
+  static const _pdfTimeout = Duration(seconds: 45);
+  static const _pdfExtractTimeout = Duration(seconds: 30);
   static const _maxAttempts = 3;
+  static const _pdfMaxAttempts = 2;
+  static const _maxPdfBytes = 30 * 1024 * 1024;
   static const _retryBaseDelay = Duration(milliseconds: 700);
   static const _pageSize = 20;
   final Map<int, Book> _bookCache = {};
@@ -145,10 +167,133 @@ class OpenLibraryService {
   }
 
   Future<bool> hasReadableText(Book book) async {
+    if (_buildEpubSources(book).isNotEmpty) return true;
     if (_buildSources(book).isNotEmpty) return true;
     final discovered = await _discoverTextSources(book);
-    return discovered.isNotEmpty;
+    if (discovered.isNotEmpty) return true;
+    final discoveredEpub = await _discoverEpubSources(book);
+    return discoveredEpub.isNotEmpty;
   }
+
+  Future<(Uint8List, String)?> _fetchBookEpubBytes(
+    Book book, {
+    void Function(OpenLibraryDebugSnapshot snapshot)? onDebug,
+  }) async {
+    final sources = _buildEpubSources(book).toSet().toList();
+    if (sources.isEmpty) {
+      final discovered = await _discoverEpubSources(book);
+      sources.addAll(discovered);
+      onDebug?.call(
+        OpenLibraryDebugSnapshot(
+          requestUrl: 'openlibrary://book/${book.id}/epub-sources/discovered',
+          statusCode: null,
+          success: discovered.isNotEmpty,
+          bodyLength: discovered.join('\n').length,
+          bodyPreview: discovered.isEmpty ? '(none)' : discovered.join('\n'),
+          resultCount: discovered.length,
+          error: discovered.isEmpty ? 'No EPUB sources discovered.' : null,
+          timestamp: DateTime.now(),
+        ),
+      );
+    }
+    if (sources.isEmpty) return null;
+
+    for (final url in sources) {
+      try {
+        final resp = await _getWithRetry(
+          Uri.parse(url),
+          timeout: _textTimeout,
+          maxAttempts: 2,
+        );
+        if (resp.statusCode != 200) {
+          onDebug?.call(
+            OpenLibraryDebugSnapshot(
+              requestUrl: url,
+              statusCode: resp.statusCode,
+              success: false,
+              bodyLength: resp.bodyBytes.length,
+              bodyPreview: _preview(resp.body),
+              resultCount: null,
+              error: 'HTTP ${resp.statusCode}',
+              timestamp: DateTime.now(),
+            ),
+          );
+          continue;
+        }
+
+        final contentType = (resp.headers['content-type'] ?? '').toLowerCase();
+        final looksLikeZip = resp.bodyBytes.length >= 2 &&
+            resp.bodyBytes[0] == 0x50 &&
+            resp.bodyBytes[1] == 0x4B;
+        final likelyEpub = url.toLowerCase().endsWith('.epub') ||
+            contentType.contains('epub') ||
+            looksLikeZip;
+        if (!likelyEpub) {
+          onDebug?.call(
+            OpenLibraryDebugSnapshot(
+              requestUrl: url,
+              statusCode: resp.statusCode,
+              success: false,
+              bodyLength: resp.bodyBytes.length,
+              bodyPreview: 'Content-Type: $contentType',
+              resultCount: null,
+              error: 'Source is not EPUB content',
+              timestamp: DateTime.now(),
+            ),
+          );
+          continue;
+        }
+
+        try {
+          await EpubReader.readBook(resp.bodyBytes);
+        } catch (e) {
+          onDebug?.call(
+            OpenLibraryDebugSnapshot(
+              requestUrl: url,
+              statusCode: resp.statusCode,
+              success: false,
+              bodyLength: resp.bodyBytes.length,
+              bodyPreview: _preview(resp.body),
+              resultCount: null,
+              error: 'EPUB validation failed: $e',
+              timestamp: DateTime.now(),
+            ),
+          );
+          continue;
+        }
+
+        onDebug?.call(
+          OpenLibraryDebugSnapshot(
+            requestUrl: url,
+            statusCode: resp.statusCode,
+            success: true,
+            bodyLength: resp.bodyBytes.length,
+            bodyPreview: 'EPUB bytes downloaded and validated',
+            resultCount: null,
+            error: null,
+            timestamp: DateTime.now(),
+          ),
+        );
+        return (resp.bodyBytes, url);
+      } catch (e) {
+        onDebug?.call(
+          OpenLibraryDebugSnapshot(
+            requestUrl: url,
+            statusCode: null,
+            success: false,
+            bodyLength: 0,
+            bodyPreview: '',
+            resultCount: null,
+            error: _friendlyNetworkError(e),
+            timestamp: DateTime.now(),
+          ),
+        );
+      }
+    }
+
+    return null;
+  }
+
 
   Future<String> fetchBookText(
     Book book, {
@@ -488,95 +633,24 @@ class OpenLibraryService {
     return iaIds.toList();
   }
 
-  /// Loads book content — first as scanned image pages, falling back to plain
-  /// text when no image pages are available. Throws if neither is accessible.
+  /// Loads book content — EPUB bytes first, then legacy plain-text fallback.
   Future<BookContent> fetchBookContent(
     Book book, {
     void Function(OpenLibraryDebugSnapshot)? onDebug,
+    bool preferEpub = true,
   }) async {
-    // Try scanned image pages from archive.org via IIIF first.
-    final iaIds = _getIaIds(book).toSet();
-    if (iaIds.isEmpty) {
-      final discovered = await _discoverIaIds(book);
-      iaIds.addAll(discovered);
-      onDebug?.call(OpenLibraryDebugSnapshot(
-        requestUrl: 'openlibrary://book/${book.id}/images/discovered-ia-ids',
-        statusCode: null,
-        success: discovered.isNotEmpty,
-        bodyLength: discovered.join('\n').length,
-        bodyPreview: discovered.isEmpty ? '(none)' : discovered.join('\n'),
-        resultCount: discovered.length,
-        error: discovered.isEmpty
-            ? 'No additional archive identifiers discovered.'
-            : null,
-        timestamp: DateTime.now(),
-      ));
-    }
-    Object? lastImageError;
-    for (final iaId in iaIds) {
-      final normalizedIaId = _normalizeIaId(iaId);
-      if (normalizedIaId == null) {
-        onDebug?.call(OpenLibraryDebugSnapshot(
-          requestUrl: 'openlibrary://book/${book.id}/images/skip-invalid-id',
-          statusCode: null,
-          success: false,
-          bodyLength: 0,
-          bodyPreview: iaId,
-          resultCount: 0,
-          error: 'Invalid archive identifier',
-          timestamp: DateTime.now(),
-        ));
-        continue;
-      }
-      try {
-        final pages = await _fetchIIIFImagePages(normalizedIaId, onDebug: onDebug);
-        if (pages.isNotEmpty) return BookContent.images(pages);
-      } catch (e) {
-        lastImageError = e;
+    if (preferEpub) {
+      // Prefer formatted EPUB bytes first so the viewer can preserve layout.
+      final epubPayload = await _fetchBookEpubBytes(book, onDebug: onDebug);
+      if (epubPayload != null && epubPayload.$1.isNotEmpty) {
+        return BookContent.epub(
+          epubPayload.$1,
+          epubSourceUrl: epubPayload.$2,
+        );
       }
     }
 
-    // If initial identifiers did not produce image pages, make one best-effort
-    // discovery pass from work editions and retry any newly found IDs.
-    final discoveredAfterMiss = await _discoverIaIds(book);
-    final retryIds = discoveredAfterMiss.where((id) => !iaIds.contains(id)).toList();
-    if (retryIds.isNotEmpty) {
-      onDebug?.call(OpenLibraryDebugSnapshot(
-        requestUrl: 'openlibrary://book/${book.id}/images/retry-with-discovered-ids',
-        statusCode: null,
-        success: true,
-        bodyLength: retryIds.join('\n').length,
-        bodyPreview: retryIds.join('\n'),
-        resultCount: retryIds.length,
-        error: null,
-        timestamp: DateTime.now(),
-      ));
-      for (final iaId in retryIds) {
-        final normalizedIaId = _normalizeIaId(iaId);
-        if (normalizedIaId == null) continue;
-        try {
-          final pages = await _fetchIIIFImagePages(normalizedIaId, onDebug: onDebug);
-          if (pages.isNotEmpty) return BookContent.images(pages);
-        } catch (e) {
-          lastImageError = e;
-        }
-      }
-    }
-
-    onDebug?.call(OpenLibraryDebugSnapshot(
-      requestUrl: 'openlibrary://book/${book.id}/images-unavailable',
-      statusCode: null,
-      success: false,
-      bodyLength: 0,
-      bodyPreview: '',
-      resultCount: 0,
-      error: iaIds.isEmpty
-          ? 'No archive identifiers found; falling back to text.'
-          : 'No image pages found; falling back to text.',
-      timestamp: DateTime.now(),
-    ));
-
-    // Fallback to text.
+    // Fallback: legacy plain-text sources.
     try {
       final text = await fetchBookText(book, onDebug: onDebug);
       return BookContent.text(text);
@@ -588,16 +662,410 @@ class OpenLibraryService {
         bodyLength: 0,
         bodyPreview: '',
         resultCount: 0,
-        error: 'Text unavailable after image fallback: $e',
+        error: 'Text unavailable after EPUB fallback: $e',
         timestamp: DateTime.now(),
       ));
     }
 
     throw Exception(
       'No readable content available for this book. '
-      'The edition may be restricted or temporarily unavailable.'
-      '${lastImageError != null ? ' (image error: $lastImageError)' : ''}',
+      'The edition may be restricted or temporarily unavailable.',
     );
+  }
+
+  /// Extracts ordered HTML strings from an EPUB zip.
+  ///
+  /// Reads container.xml → OPF → spine → HTML files in spine order.
+  /// Uses lenient UTF-8 decoding so malformed bytes never throw.
+  /// Returns null if the EPUB cannot be parsed or yields no readable HTML.
+  Future<List<String>?> extractEpubHtmlSpine(
+    Uint8List epubBytes, {
+    void Function(OpenLibraryDebugSnapshot)? onDebug,
+  }) async {
+    try {
+      final archive = ZipDecoder().decodeBytes(epubBytes);
+
+      // 1. container.xml → OPF path
+      final containerFile = archive.findFile('META-INF/container.xml');
+      if (containerFile == null) return null;
+      final containerXml = utf8.decode(
+        containerFile.content as List<int>,
+        allowMalformed: true,
+      );
+      final opfPathMatch = RegExp(
+        r'full-path="([^"]+)"',
+        caseSensitive: false,
+      ).firstMatch(containerXml);
+      if (opfPathMatch == null) return null;
+      final opfPath = opfPathMatch.group(1)!;
+      final opfDir =
+          opfPath.contains('/') ? '${opfPath.substring(0, opfPath.lastIndexOf('/') + 1)}' : '';
+
+      // 2. OPF → manifest + spine
+      final opfFile = archive.findFile(opfPath);
+      if (opfFile == null) return null;
+      final opfContent =
+          utf8.decode(opfFile.content as List<int>, allowMalformed: true);
+
+      // Detect whether this is an Internet Archive auto-generated EPUB.
+      // IA always stamps the OPF with their name in dc:publisher, dc:creator,
+      // dc:contributor, or a <meta> referencing archive.org / Internet Archive.
+      final isInternetArchive = _isInternetArchiveOpf(opfContent);
+
+      // Parse manifest: id → href
+      final idToHref = <String, String>{};
+      for (final m in RegExp(
+        r'<item\b[^>]*\bid="([^"]+)"[^>]*\bhref="([^"]+)"',
+        caseSensitive: false,
+      ).allMatches(opfContent)) {
+        idToHref[m.group(1)!] = m.group(2)!;
+      }
+      for (final m in RegExp(
+        r'<item\b[^>]*\bhref="([^"]+)"[^>]*\bid="([^"]+)"',
+        caseSensitive: false,
+      ).allMatches(opfContent)) {
+        idToHref.putIfAbsent(m.group(2)!, () => m.group(1)!);
+      }
+
+      // Parse spine order
+      final spineSection = RegExp(
+            r'<spine\b[^>]*>(.*?)</spine>',
+            caseSensitive: false,
+            dotAll: true,
+          ).firstMatch(opfContent)?.group(1) ??
+          '';
+      final spineIds = RegExp(
+        r'<itemref\b[^>]*\bidref="([^"]+)"',
+        caseSensitive: false,
+      ).allMatches(spineSection).map((m) => m.group(1)!).toList();
+
+      // 3. Read HTML files in spine order
+      final htmlPages = <String>[];
+      final seen = <String>{};
+      var skippedEmptyPages = 0;
+
+      for (final id in spineIds) {
+        var href = idToHref[id];
+        if (href == null) continue;
+        if (href.contains('#')) href = href.split('#').first;
+        if (!seen.add(href)) continue;
+
+        final lower = href.toLowerCase();
+        // Skip nav / toc files — these are structural, not content
+        if (lower.contains('toc') ||
+            lower.contains('ncx') ||
+            lower == 'nav.xhtml' ||
+            lower == 'nav.html' ||
+            lower.endsWith('/nav.xhtml') ||
+            lower.endsWith('/nav.html')) continue;
+
+        final fullPath = opfDir.isEmpty ? href : '$opfDir$href';
+        final file = archive.findFile(fullPath) ?? archive.findFile(href);
+        if (file == null) continue;
+
+        final raw = utf8.decode(
+          file.content as List<int>,
+          allowMalformed: true,
+        );
+        if (raw.trim().isEmpty) continue;
+        final cleaned = isInternetArchive ? _cleanInternetArchiveHtml(raw) : raw;
+        if (_isMeaningfulHtmlPage(cleaned)) {
+          htmlPages.add(cleaned);
+        } else {
+          skippedEmptyPages++;
+        }
+      }
+
+      // Fallback: if spine parsing gave nothing, collect all HTML files sorted
+      if (htmlPages.isEmpty) {
+        final fallbackFiles = archive.files.where((f) {
+          final n = f.name.toLowerCase();
+          return (n.endsWith('.html') || n.endsWith('.xhtml') || n.endsWith('.htm')) &&
+              !n.contains('toc') &&
+              !n.contains('ncx') &&
+              !n.endsWith('nav.xhtml') &&
+              !n.endsWith('nav.html');
+        }).toList()
+          ..sort((a, b) => a.name.compareTo(b.name));
+
+        for (final f in fallbackFiles) {
+          final raw = utf8.decode(f.content as List<int>, allowMalformed: true);
+          if (raw.trim().isNotEmpty) {
+            final cleaned = isInternetArchive ? _cleanInternetArchiveHtml(raw) : raw;
+            if (_isMeaningfulHtmlPage(cleaned)) {
+              htmlPages.add(cleaned);
+            } else {
+              skippedEmptyPages++;
+            }
+          }
+        }
+      }
+
+      // Fail-open: if filtering removed everything, retry without filtering so
+      // we never hide an entire book due to a strict heuristic.
+      if (htmlPages.isEmpty && skippedEmptyPages > 0) {
+        for (final id in spineIds) {
+          var href = idToHref[id];
+          if (href == null) continue;
+          if (href.contains('#')) href = href.split('#').first;
+          final lower = href.toLowerCase();
+          if (lower.contains('toc') ||
+              lower.contains('ncx') ||
+              lower == 'nav.xhtml' ||
+              lower == 'nav.html' ||
+              lower.endsWith('/nav.xhtml') ||
+              lower.endsWith('/nav.html')) {
+            continue;
+          }
+          final fullPath = opfDir.isEmpty ? href : '$opfDir$href';
+          final file = archive.findFile(fullPath) ?? archive.findFile(href);
+          if (file == null) continue;
+          final raw = utf8.decode(file.content as List<int>, allowMalformed: true);
+          if (raw.trim().isEmpty) continue;
+          htmlPages.add(isInternetArchive ? _cleanInternetArchiveHtml(raw) : raw);
+        }
+      }
+
+      onDebug?.call(OpenLibraryDebugSnapshot(
+        requestUrl: 'openlibrary://epub-html-spine',
+        statusCode: null,
+        success: htmlPages.isNotEmpty,
+        bodyLength: htmlPages.fold(0, (s, h) => s + h.length),
+        bodyPreview:
+            'spineItems=${spineIds.length} htmlPages=${htmlPages.length} skippedEmpty=$skippedEmptyPages',
+        resultCount: htmlPages.length,
+        error: htmlPages.isEmpty ? 'No readable HTML pages found in EPUB spine.' : null,
+        timestamp: DateTime.now(),
+      ));
+
+      return htmlPages.isEmpty ? null : htmlPages;
+    } catch (e) {
+      onDebug?.call(OpenLibraryDebugSnapshot(
+        requestUrl: 'openlibrary://epub-html-spine',
+        statusCode: null,
+        success: false,
+        bodyLength: 0,
+        bodyPreview: '',
+        resultCount: 0,
+        error: 'EPUB HTML spine extraction failed: $e',
+        timestamp: DateTime.now(),
+      ));
+      return null;
+    }
+  }
+
+  Future<String?> fetchPdfTextForEpubUrl(
+    String epubUrl, {
+    void Function(OpenLibraryDebugSnapshot snapshot)? onDebug,
+  }) async {
+    final pdfUrls = _buildPdfFallbackSourcesFromEpub(epubUrl);
+    if (pdfUrls.isEmpty) return null;
+
+    onDebug?.call(
+      OpenLibraryDebugSnapshot(
+        requestUrl: 'openlibrary://pdf-fallback/candidates',
+        statusCode: null,
+        success: true,
+        bodyLength: pdfUrls.join('\n').length,
+        bodyPreview: pdfUrls.join('\n'),
+        resultCount: pdfUrls.length,
+        error: null,
+        timestamp: DateTime.now(),
+      ),
+    );
+
+    for (final pdfUrl in pdfUrls) {
+      final sw = Stopwatch()..start();
+      try {
+        final resp = await _getWithRetry(
+          Uri.parse(pdfUrl),
+          timeout: _pdfTimeout,
+          maxAttempts: _pdfMaxAttempts,
+          onAttemptStart: (attempt) {
+            onDebug?.call(
+              OpenLibraryDebugSnapshot(
+                requestUrl: pdfUrl,
+                statusCode: null,
+                success: true,
+                bodyLength: 0,
+                bodyPreview:
+                    'stage=request-attempt attempt=$attempt/$_pdfMaxAttempts timeoutSec=${_pdfTimeout.inSeconds}',
+                resultCount: null,
+                error: null,
+                timestamp: DateTime.now(),
+              ),
+            );
+          },
+        );
+        sw.stop();
+
+        if (resp.statusCode != 200) {
+          onDebug?.call(
+            OpenLibraryDebugSnapshot(
+              requestUrl: pdfUrl,
+              statusCode: resp.statusCode,
+              success: false,
+              bodyLength: resp.bodyBytes.length,
+              bodyPreview: 'elapsedMs=${sw.elapsedMilliseconds}\n${_preview(resp.body)}',
+              resultCount: null,
+              error: 'HTTP ${resp.statusCode}',
+              timestamp: DateTime.now(),
+            ),
+          );
+          continue;
+        }
+
+        final contentType = (resp.headers['content-type'] ?? '').toLowerCase();
+        final looksLikePdf = resp.bodyBytes.length >= 4 &&
+            resp.bodyBytes[0] == 0x25 &&
+            resp.bodyBytes[1] == 0x50 &&
+            resp.bodyBytes[2] == 0x44 &&
+            resp.bodyBytes[3] == 0x46;
+
+        if (resp.bodyBytes.length > _maxPdfBytes) {
+          onDebug?.call(
+            OpenLibraryDebugSnapshot(
+              requestUrl: pdfUrl,
+              statusCode: resp.statusCode,
+              success: false,
+              bodyLength: resp.bodyBytes.length,
+              bodyPreview:
+                  'elapsedMs=${sw.elapsedMilliseconds}\nContent-Type: $contentType',
+              resultCount: null,
+              error:
+                  'PDF is too large (${resp.bodyBytes.length} bytes) for fallback extraction budget.',
+              timestamp: DateTime.now(),
+            ),
+          );
+          continue;
+        }
+
+        if (!contentType.contains('pdf') && !looksLikePdf) {
+          onDebug?.call(
+            OpenLibraryDebugSnapshot(
+              requestUrl: pdfUrl,
+              statusCode: resp.statusCode,
+              success: false,
+              bodyLength: resp.bodyBytes.length,
+              bodyPreview: 'elapsedMs=${sw.elapsedMilliseconds}\nContent-Type: $contentType',
+              resultCount: null,
+              error: 'Source is not PDF content',
+              timestamp: DateTime.now(),
+            ),
+          );
+          continue;
+        }
+
+        onDebug?.call(
+          OpenLibraryDebugSnapshot(
+            requestUrl: pdfUrl,
+            statusCode: resp.statusCode,
+            success: true,
+            bodyLength: resp.bodyBytes.length,
+            bodyPreview:
+                'stage=extract-start elapsedMs=${sw.elapsedMilliseconds} bytes=${resp.bodyBytes.length}',
+            resultCount: null,
+            error: null,
+            timestamp: DateTime.now(),
+          ),
+        );
+
+        final parseSw = Stopwatch()..start();
+        final rawText = await Isolate.run<String>(
+          () => _extractPdfText(resp.bodyBytes),
+        ).timeout(_pdfExtractTimeout);
+        parseSw.stop();
+
+        onDebug?.call(
+          OpenLibraryDebugSnapshot(
+            requestUrl: pdfUrl,
+            statusCode: resp.statusCode,
+            success: true,
+            bodyLength: rawText.length,
+            bodyPreview:
+                'stage=extract-finished parseMs=${parseSw.elapsedMilliseconds}',
+            resultCount: null,
+            error: null,
+            timestamp: DateTime.now(),
+          ),
+        );
+
+        final cleaned = cleanGutenbergText(rawText).trim();
+        if (cleaned.length < 500 || !_looksLikeReadableText(cleaned)) {
+          onDebug?.call(
+            OpenLibraryDebugSnapshot(
+              requestUrl: pdfUrl,
+              statusCode: resp.statusCode,
+              success: false,
+              bodyLength: resp.bodyBytes.length,
+              bodyPreview: 'elapsedMs=${sw.elapsedMilliseconds}\n${cleaned.isEmpty ? '(empty)' : _preview(cleaned)}',
+              resultCount: null,
+              error: cleaned.length < 500
+                  ? 'PDF extracted insufficient content (${cleaned.length} chars)'
+                  : 'PDF extracted text quality is too low',
+              timestamp: DateTime.now(),
+            ),
+          );
+          continue;
+        }
+
+        onDebug?.call(
+          OpenLibraryDebugSnapshot(
+            requestUrl: pdfUrl,
+            statusCode: resp.statusCode,
+            success: true,
+            bodyLength: resp.bodyBytes.length,
+            bodyPreview: 'elapsedMs=${sw.elapsedMilliseconds}\n${_preview(cleaned)}',
+            resultCount: null,
+            error: null,
+            timestamp: DateTime.now(),
+          ),
+        );
+        return cleaned;
+      } catch (e) {
+        sw.stop();
+        onDebug?.call(
+          OpenLibraryDebugSnapshot(
+            requestUrl: pdfUrl,
+            statusCode: null,
+            success: false,
+            bodyLength: 0,
+            bodyPreview: 'elapsedMs=${sw.elapsedMilliseconds}',
+            resultCount: null,
+            error: 'PDF fallback failed: ${_friendlyNetworkError(e)}',
+            timestamp: DateTime.now(),
+          ),
+        );
+      }
+    }
+
+    return null;
+  }
+
+  List<String> _buildPdfFallbackSourcesFromEpub(String epubUrl) {
+    final urls = <String>{};
+    final derived = _derivePdfUrlFromEpub(epubUrl);
+    if (derived != null) urls.add(derived);
+
+    final uri = Uri.tryParse(epubUrl);
+    if (uri != null && uri.host.toLowerCase().contains('archive.org')) {
+      final parts = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+      if (parts.length >= 3 && parts.first.toLowerCase() == 'download') {
+        final iaId = parts[1];
+        urls.add('https://archive.org/download/$iaId/$iaId.pdf');
+      }
+    }
+
+    return urls.toList();
+  }
+
+  String? _derivePdfUrlFromEpub(String epubUrl) {
+    final uri = Uri.tryParse(epubUrl);
+    if (uri == null) return null;
+    final path = uri.path;
+    if (!path.toLowerCase().endsWith('.epub')) return null;
+    final pdfPath = '${path.substring(0, path.length - 5)}.pdf';
+    return uri.replace(path: pdfPath).toString();
   }
 
   Uri _buildListUri({
@@ -877,6 +1345,24 @@ class OpenLibraryService {
     return results.toSet().toList();
   }
 
+  List<String> _collectEpubSources(Map<String, dynamic> source) {
+    final results = <String>[];
+    final ia = source['ia'];
+    if (ia is List && ia.isNotEmpty) {
+      for (final id in ia.take(3)) {
+        final iaId = _normalizeIaId(id.toString());
+        if (iaId == null) continue;
+        results.add('https://archive.org/download/$iaId/$iaId.epub');
+      }
+    }
+    final gutenberg = source['id_project_gutenberg'];
+    if (gutenberg is List && gutenberg.isNotEmpty) {
+      final gid = gutenberg.first.toString();
+      results.add('https://www.gutenberg.org/cache/epub/$gid/pg$gid.epub');
+    }
+    return results.toSet().toList();
+  }
+
   String? _pickWorkKey(Map<String, dynamic> doc) {
     final raw = doc['key'];
     if (raw is String && raw.startsWith('/works/')) return raw;
@@ -957,6 +1443,29 @@ class OpenLibraryService {
     return sources.toSet().toList();
   }
 
+  List<String> _buildEpubSources(Book book) {
+    final sources = <String>{};
+    final fmts = book.formats;
+    final entries = fmts.entries.toList();
+    for (final entry in entries) {
+      final key = entry.key.toLowerCase();
+      if (key.contains('epub') || entry.value.toLowerCase().endsWith('.epub')) {
+        sources.add(entry.value);
+      }
+    }
+    final serialized = fmts['openlibrary/epub_sources'];
+    if (serialized != null && serialized.isNotEmpty) {
+      sources.addAll(serialized
+          .split('|')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty));
+    }
+    for (final iaId in _getIaIds(book)) {
+      sources.add('https://archive.org/download/$iaId/$iaId.epub');
+    }
+    return sources.toList();
+  }
+
   Future<List<String>> _discoverTextSources(Book book) async {
     final sources = <String>{};
     final workKey = _normalizeWorkKey(book.formats['openlibrary/work_key']) ??
@@ -979,6 +1488,38 @@ class OpenLibraryService {
       }
     } catch (_) {
       // Best-effort only; caller will surface final failure if no source works.
+    }
+
+    return sources.toList();
+  }
+
+  Future<List<String>> _discoverEpubSources(Book book) async {
+    final sources = <String>{};
+    final workKey = _normalizeWorkKey(book.formats['openlibrary/work_key']) ??
+        '/works/OL${book.id}W';
+    final editionsUri =
+        Uri.parse('$_base$workKey/editions.json').replace(queryParameters: {
+      'limit': '30',
+    });
+
+    try {
+      final resp = await _getWithRetry(editionsUri, timeout: _timeout);
+      if (resp.statusCode != 200) return const [];
+      final data = json.decode(resp.body) as Map<String, dynamic>;
+      final entries = (data['entries'] as List<dynamic>? ?? []);
+      for (final entry in entries.take(30)) {
+        if (entry is! Map<String, dynamic>) continue;
+        sources.addAll(_collectEpubSources(entry));
+        final ocaid = entry['ocaid'];
+        if (ocaid is String && ocaid.trim().isNotEmpty) {
+          final normalized = _normalizeIaId(ocaid);
+          if (normalized != null) {
+            sources.add('https://archive.org/download/$normalized/$normalized.epub');
+          }
+        }
+      }
+    } catch (_) {
+      // Best-effort only; caller handles fallback semantics.
     }
 
     return sources.toList();
@@ -1074,6 +1615,35 @@ class OpenLibraryService {
         });
   }
 
+  /// Returns true if an EPUB HTML page has meaningful visible content.
+  ///
+  /// This intentionally uses conservative thresholds to keep short chapter
+  /// title pages while removing whitespace/placeholder pages.
+  bool _isMeaningfulHtmlPage(String html) {
+    if (html.trim().isEmpty) return false;
+
+    final plain = htmlToPlainText(html)
+        .replaceAll('\u00A0', ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (plain.isEmpty) return false;
+
+    // Keep heading-only pages such as "Chapter I".
+    final hasHeadingTag = RegExp(r'<h[1-6]\b', caseSensitive: false).hasMatch(html);
+    final alphaCount = RegExp(r'[A-Za-z]').allMatches(plain).length;
+    if (hasHeadingTag && alphaCount >= 3) return true;
+
+    // Reject pages that are effectively only punctuation/digits.
+    final hasLetter = alphaCount > 0;
+    final hasDigit = RegExp(r'\d').hasMatch(plain);
+    final hasOnlyPunctOrSpace = RegExp(r'^[^A-Za-z0-9]*$').hasMatch(plain);
+    if (hasOnlyPunctOrSpace) return false;
+    if (!hasLetter && hasDigit && plain.length <= 3) return false;
+
+    // Keep even short textual pages, but require some actual letters.
+    return hasLetter || plain.length >= 4;
+  }
+
   String cleanGutenbergText(String text) {
     // Strip Project Gutenberg header and footer.
     final startRegex = RegExp(
@@ -1133,10 +1703,12 @@ class OpenLibraryService {
     Uri uri, {
     required Duration timeout,
     int maxAttempts = _maxAttempts,
+    void Function(int attempt)? onAttemptStart,
   }) async {
     Object? lastError;
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
+        onAttemptStart?.call(attempt);
         return await http.get(uri).timeout(timeout);
       } on TimeoutException catch (e) {
         lastError = e;
@@ -1167,6 +1739,15 @@ class OpenLibraryService {
       throw Exception('Network error while contacting server.');
     }
     throw Exception('Request failed after retries.');
+  }
+
+  static String _extractPdfText(Uint8List bytes) {
+    final document = PdfDocument(inputBytes: bytes);
+    try {
+      return PdfTextExtractor(document).extractText();
+    } finally {
+      document.dispose();
+    }
   }
 
   String _friendlyNetworkError(Object error) {
@@ -1225,6 +1806,118 @@ class OpenLibraryService {
     if (text.length <= max) return text;
     return '${text.substring(0, max)}...';
   }
+
+  /// Returns true when the OPF metadata identifies this as an Internet Archive
+  /// auto-generated EPUB. IA always stamps their EPUBs with their name in one
+  /// or more of the Dublin Core metadata elements.
+  bool _isInternetArchiveOpf(String opfContent) {
+    final metadata = RegExp(
+          r'<metadata\b[^>]*>(.*?)</metadata>',
+          caseSensitive: false,
+          dotAll: true,
+        ).firstMatch(opfContent)?.group(1) ??
+        opfContent;
+
+    // Restrict checks to metadata field values to avoid false positives from
+    // unrelated URLs elsewhere in the OPF.
+    const fields = ['publisher', 'creator', 'contributor', 'source', 'description'];
+    for (final field in fields) {
+      final value = RegExp(
+            '<(?:dc:)?$field\\b[^>]*>(.*?)</(?:dc:)?$field>',
+            caseSensitive: false,
+            dotAll: true,
+          ).firstMatch(metadata)?.group(1) ??
+          '';
+      final normalized = value.toLowerCase();
+      if (normalized.contains('internet archive') ||
+          normalized.contains('archive.org') ||
+          normalized.contains('internetarchive')) {
+        return true;
+      }
+    }
+
+    // Fallback to explicit metadata tags mentioning IA.
+    return RegExp(
+      r'<meta\b[^>]*(?:internet\s*archive|archive\.org|internetarchive)[^>]*>',
+      caseSensitive: false,
+    ).hasMatch(metadata);
+  }
+
+  /// Cleans Internet Archive-specific boilerplate from an EPUB HTML page.
+  ///
+  /// Uses structural markers that IA itself embeds rather than fragile text
+  /// matching of arbitrary content:
+  ///
+  /// 1. IA pages include `<meta name="generator"` or `<meta name="ocr_…">`
+  ///    tags — we use that to confirm this is indeed an IA page before cleaning.
+  /// 2. The accuracy disclaimer is always the very first `<p>` or `<div>` in
+  ///    `<body>` that contains a percentage marker near the word "accurate".
+  ///    IA does not put any other content before it on the page.
+  /// 3. IA introductory pages (the "This book was produced in EPUB format…"
+  ///    notice) are identified by the absence of any substantial text outside
+  ///    that block, and skipped entirely if they have less than 200 chars of
+  ///    real content after stripping.
+  String _cleanInternetArchiveHtml(String html) {
+    // Only apply cleaning if this page carries clear IA markers.
+    final headMatch = RegExp(
+      r'<head\b[^>]*>(.*?)</head>',
+      caseSensitive: false,
+      dotAll: true,
+    ).firstMatch(html)?.group(1) ?? '';
+
+    final hasIaMeta = RegExp(
+      r'<meta\b[^>]*(?:ocr[_-]|archive\.org|internetarchive|internet\s*archive)[^>]*>',
+      caseSensitive: false,
+    ).hasMatch(headMatch);
+
+    // If the page has no explicit IA marker, do not modify it.
+    if (!hasIaMeta) return html;
+
+    final originalVisibleText = html
+        .replaceAll(RegExp(r'<[^>]+>'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    var cleaned = html;
+
+    // Remove IA OCR accuracy disclaimer block.
+    cleaned = cleaned.replaceAllMapped(
+      RegExp(
+        r'<(p|div|section)\b([^>]*)>((?:(?!</\1>).)*?estimated\s+to\s+be\s+only(?:(?!</\1>).)*?%(?:(?!</\1>).)*?accurat(?:(?!</\1>).)*?)</\1>',
+        caseSensitive: false,
+        dotAll: true,
+      ),
+      (m) {
+        final inner = m.group(3) ?? '';
+        final strippedText = inner
+            .replaceAll(RegExp(r'<[^>]+>'), '')
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim();
+        if (strippedText.length < 220) {
+          return '';
+        }
+        return m.group(0)!;
+      },
+    );
+
+    // Fail-safe: if cleanup wipes nearly all visible text, keep original page.
+    final cleanedVisibleText = cleaned
+        .replaceAll(RegExp(r'<[^>]+>'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (originalVisibleText.isNotEmpty &&
+        cleanedVisibleText.length <
+            (originalVisibleText.length * 0.1).floor().clamp(40, 999999)) {
+      return html;
+    }
+
+    return cleaned;
+  }
+
+  /// Strips Internet Archive boilerplate from EPUB HTML pages.
+  ///
+  /// Kept for backward compatibility; delegates to [_cleanInternetArchiveHtml].
+  @Deprecated('Use _cleanInternetArchiveHtml with OPF-based detection instead.')
+  String _cleanArchiveHtml(String html) => _cleanInternetArchiveHtml(html);
 }
 
 

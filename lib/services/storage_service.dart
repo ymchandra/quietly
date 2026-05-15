@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/book.dart';
@@ -120,6 +121,13 @@ class StorageService {
     return File('${booksDir.path}/$bookId.txt');
   }
 
+  Future<File> _offlineEpubFile(int bookId) async {
+    final dir = await getApplicationDocumentsDirectory();
+    final booksDir = Directory('${dir.path}/books');
+    if (!booksDir.existsSync()) booksDir.createSync(recursive: true);
+    return File('${booksDir.path}/$bookId.epub');
+  }
+
   Future<void> saveOfflineText(int bookId, String text) async {
     final file = await _offlineFile(bookId);
     await file.writeAsString(text, flush: true);
@@ -133,6 +141,27 @@ class StorageService {
 
   Future<void> deleteOfflineText(int bookId) async {
     final file = await _offlineFile(bookId);
+    if (file.existsSync()) await file.delete();
+  }
+
+  Future<void> saveOfflineEpub(int bookId, Uint8List bytes) async {
+    final file = await _offlineEpubFile(bookId);
+    await file.writeAsBytes(bytes, flush: true);
+  }
+
+  Future<File?> getOfflineEpubFile(int bookId) async {
+    final file = await _offlineEpubFile(bookId);
+    if (!file.existsSync()) return null;
+    return file;
+  }
+
+  Future<bool> hasOfflineEpub(int bookId) async {
+    final file = await _offlineEpubFile(bookId);
+    return file.existsSync();
+  }
+
+  Future<void> deleteOfflineEpub(int bookId) async {
+    final file = await _offlineEpubFile(bookId);
     if (file.existsSync()) await file.delete();
   }
 

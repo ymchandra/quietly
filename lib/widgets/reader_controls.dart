@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 class ReaderControls extends StatelessWidget {
@@ -12,6 +13,8 @@ class ReaderControls extends StatelessWidget {
   final Color textColor;
   final Color accentColor;
   final bool showSettings;
+  final String? bookTitle;
+  final String? bookAuthor;
   final VoidCallback onBack;
   final VoidCallback onSettings;
 
@@ -25,6 +28,8 @@ class ReaderControls extends StatelessWidget {
     required this.textColor,
     required this.accentColor,
     this.showSettings = true,
+    this.bookTitle,
+    this.bookAuthor,
     required this.onBack,
     required this.onSettings,
   });
@@ -59,6 +64,40 @@ class ReaderControls extends StatelessWidget {
                           color: textColor),
                       onPressed: onBack,
                     ),
+                    // Book title and author in center
+                    if (bookTitle != null)
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                bookTitle!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.lora(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: textColor,
+                                ),
+                              ),
+                              if (bookAuthor != null)
+                                Text(
+                                  bookAuthor!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: textColor.withValues(alpha: 0.65),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
                     if (showSettings)
                       IconButton(
                         icon: PhosphorIcon(PhosphorIconsRegular.textT,

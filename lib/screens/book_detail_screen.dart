@@ -242,8 +242,14 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     if (_book == null || !_readEnabled) return;
     setState(() => _downloading = true);
     try {
-      final text = await _service.fetchBookText(_book!);
-      await _storage.saveOfflineText(_book!.id, text);
+      final content = await _service.fetchBookContent(_book!);
+      if (content.isEpubBased) {
+        await _storage.saveOfflineEpub(_book!.id, content.epubBytes!);
+      } else if (content.text != null) {
+        await _storage.saveOfflineText(_book!.id, content.text!);
+      } else {
+        throw Exception('No offline-ready text or EPUB content available.');
+      }
       await lib.addDownloaded(_book!);
     } catch (e) {
       if (mounted) {

@@ -1,9 +1,15 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:epubx/epubx.dart' show EpubReader;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_epub_viewer/flutter_epub_viewer.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_html/flutter_html.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:provider/provider.dart';
 import '../constants/app_colors.dart';
@@ -34,12 +40,20 @@ class _ReaderScreenState extends State<ReaderScreen> {
   final _storage = StorageService();
 
   BookContent? _content;
+  Book? _book;
+  EpubController? _epubController;
+  EpubSource? _epubSource;
+  EpubLocation? _epubLocation;
+  List<EpubChapter> _epubChapters = const [];
+  bool _epubViewerLoaded = false;
   bool _loading = true;
   String? _error;
   final List<OpenLibraryDebugSnapshot> _debugSnapshots = [];
   bool _showDebugPanel = false;
 
-  bool get _isImageBased => _content?.isImageBased ?? false;
+
+  bool get _isEpubBased => _content?.isEpubBased ?? false;
+  bool get _isHtmlBased => _content?.isHtmlBased ?? false;
 
   List<String> _allPages = [];
   List<String> _pages = [];
@@ -50,6 +64,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
   bool _showControls = true;
   Timer? _hideTimer;
   Timer? _scrollDebounce;
+  Timer? _epubLoadTimeoutTimer;
+  bool _epubFallbackTriggered = false;
+  bool _epubEmptyContentLogged = false;
   Size? _lastSize;
 
   /// Session tracking — set when content finishes loading.
@@ -87,8 +104,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _hideTimer?.cancel();
     _scrollDebounce?.cancel();
+    _epubLoadTimeoutTimer?.cancel();
     _pageController.dispose();
     _scrollController.dispose();
+    _clearEpubController();
     // Persist session stats (fire-and-forget; context is no longer available).
     final sp = _suggestionsProvider;
     if (sp != null && _sessionStartMs != null) {
@@ -114,33 +133,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
       });
     }
     try {
-      final offline = await _storage.getOfflineText(widget.bookId);
-      if (offline != null) {
-        _recordDebug(
-          OpenLibraryDebugSnapshot(
-            requestUrl: 'reader://book/${widget.bookId}/offline',
-            statusCode: null,
-            success: true,
-            bodyLength: offline.length,
-            bodyPreview: 'Loaded offline text from local storage.',
-            resultCount: 1,
-            error: null,
-            timestamp: DateTime.now(),
-          ),
-        );
-        if (mounted) {
-          setState(() {
-            _content = BookContent.text(offline);
-            _loading = false;
-          });
-          _buildPages();
-          _suggestionsProvider = context.read<SuggestionsProvider>();
-          _sessionStartMs = DateTime.now().millisecondsSinceEpoch;
-          _sessionStartPage = _currentPage;
-        }
-        return;
-      }
       final initial = widget.initialBook;
+      Book? book = initial;
       if (initial != null) {
         _recordDebug(
           OpenLibraryDebugSnapshot(
@@ -155,17 +149,118 @@ class _ReaderScreenState extends State<ReaderScreen> {
           ),
         );
       }
-      final book = initial ?? await _openLibrary.fetchBook(widget.bookId);
+      final offlineEpub = await _storage.getOfflineEpubFile(widget.bookId);
+      if (offlineEpub != null) {
+        final bytes = await offlineEpub.readAsBytes();
+        final localBook = book ??
+            Book(
+              id: widget.bookId,
+              title: 'EPUB Book',
+              authors: const [],
+              subjects: const [],
+              bookshelves: const [],
+              languages: const [],
+              formats: const {},
+              downloadCount: 0,
+            );
+        if (mounted) {
+          await _setEpubController(bytes);
+          setState(() {
+            _book = localBook;
+            _content = BookContent.epub(bytes);
+            _loading = false;
+          });
+          final sp = context.read<SuggestionsProvider>();
+          sp.recordBookOpened(localBook);
+          _suggestionsProvider = sp;
+          _sessionStartMs = DateTime.now().millisecondsSinceEpoch;
+          _sessionStartPage = _currentPage;
+        }
+        return;
+      }
+
+      final offline = await _storage.getOfflineText(widget.bookId);
+      if (offline != null) {
+        final localBook = book ??
+            Book(
+              id: widget.bookId,
+              title: 'Saved Book',
+              authors: const [],
+              subjects: const [],
+              bookshelves: const [],
+              languages: const [],
+              formats: const {},
+              downloadCount: 0,
+            );
+        _recordDebug(
+          OpenLibraryDebugSnapshot(
+            requestUrl: 'reader://book/${widget.bookId}/offline',
+            statusCode: null,
+            success: true,
+            bodyLength: offline.length,
+            bodyPreview: 'Loaded offline text from local storage.',
+            resultCount: 1,
+            error: null,
+            timestamp: DateTime.now(),
+          ),
+        );
+        if (mounted) {
+          setState(() {
+            _book = localBook;
+            _content = BookContent.text(offline);
+            _loading = false;
+          });
+          _buildPages();
+          final sp = context.read<SuggestionsProvider>();
+          sp.recordBookOpened(localBook);
+          _suggestionsProvider = sp;
+          _sessionStartMs = DateTime.now().millisecondsSinceEpoch;
+          _sessionStartPage = _currentPage;
+        }
+        return;
+      }
+
+      book ??= await _openLibrary.fetchBook(widget.bookId);
       final content = await _openLibrary.fetchBookContent(
         book,
         onDebug: _recordDebug,
       );
       if (mounted) {
-        setState(() {
-          _content = content;
-          _loading = false;
-        });
-        _buildPages();
+        if (content.isEpubBased && content.epubBytes != null) {
+          // Try browser-style HTML spine extraction first — most reliable path
+          final spine = await _openLibrary.extractEpubHtmlSpine(
+            content.epubBytes!,
+            onDebug: _recordDebug,
+          );
+          if (spine != null && spine.isNotEmpty) {
+            setState(() {
+              _book = book;
+              _content = BookContent.html(
+                spine,
+                epubSourceUrl: content.epubSourceUrl,
+              );
+              _loading = false;
+              _currentPage = 0;
+            });
+            _restoreHtmlProgress();
+          } else {
+            // HTML extraction yielded nothing — fall back to EPUB viewer
+            await _setEpubController(content.epubBytes!);
+            setState(() {
+              _book = book;
+              _content = content;
+              _loading = false;
+            });
+          }
+        } else {
+          _clearEpubController();
+          setState(() {
+            _book = book;
+            _content = content;
+            _loading = false;
+          });
+          _buildPages();
+        }
         // Record the reading event so Discover can refine suggestions.
         final sp = context.read<SuggestionsProvider>();
         sp.recordBookOpened(book);
@@ -195,37 +290,351 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
+  /// Restores reading position for HTML spine mode.
+  void _restoreHtmlProgress() {
+    final spine = _content?.htmlSpine;
+    if (spine == null || spine.isEmpty) return;
+    final savedPercent =
+        context.read<LibraryProvider>().getProgress(widget.bookId)?.percent ?? 0;
+    final startPage = savedPercent == 0
+        ? 0
+        : (savedPercent * spine.length)
+            .floor()
+            .clamp(0, spine.length - 1)
+            .toInt();
+    setState(() => _currentPage = startPage);
+    if (startPage > 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_pageController.hasClients) {
+          _pageController.jumpToPage(startPage);
+        }
+      });
+    }
+    _scheduleHide();
+  }
+
+  Future<void> _setEpubController(Uint8List bytes) async {
+    _clearEpubController();
+    final sourceChecksum = _quickChecksum(bytes);
+    final sourceLooksZip =
+        bytes.length >= 2 && bytes[0] == 0x50 && bytes[1] == 0x4B;
+    final sourceInspection = await _inspectEpubBytes(bytes);
+
+    final file = await _writeTempEpub(bytes);
+    final fileBytes = await file.readAsBytes();
+    final fileChecksum = _quickChecksum(fileBytes);
+    final bytesRoundTripOk =
+        bytes.length == fileBytes.length && sourceChecksum == fileChecksum;
+
+    final controller = EpubController();
+    _epubController = controller;
+    _epubSource = EpubSource.fromFile(file);
+    _epubLocation = null;
+    _epubChapters = const [];
+    _epubViewerLoaded = false;
+    _epubFallbackTriggered = false;
+    _epubEmptyContentLogged = false;
+    _recordDebug(
+      OpenLibraryDebugSnapshot(
+        requestUrl: 'reader://book/${widget.bookId}/epub-viewer-state',
+        statusCode: null,
+        success: bytesRoundTripOk,
+        bodyLength: bytes.length,
+        bodyPreview: 'state=initializing source=${file.path}\n'
+            'sourceZip=$sourceLooksZip sourceBytes=${bytes.length} sourceChecksum=$sourceChecksum\n'
+            'fileBytes=${fileBytes.length} fileChecksum=$fileChecksum roundTripOk=$bytesRoundTripOk\n'
+            '$sourceInspection',
+        resultCount: null,
+        error: bytesRoundTripOk
+            ? null
+            : 'EPUB bytes changed when writing/reading temp file.',
+        timestamp: DateTime.now(),
+      ),
+    );
+    _epubLoadTimeoutTimer = Timer(const Duration(seconds: 14), () {
+      if (!mounted || _epubFallbackTriggered) return;
+      if (!_epubViewerLoaded) {
+        _recordDebug(
+          OpenLibraryDebugSnapshot(
+            requestUrl: 'reader://book/${widget.bookId}/epub-timeout',
+            statusCode: null,
+            success: false,
+            bodyLength: 0,
+            bodyPreview: '',
+            resultCount: null,
+            error: 'EPUB viewer timed out before onEpubLoaded callback.',
+            timestamp: DateTime.now(),
+          ),
+        );
+        _fallbackFromEpub(
+          reason: 'EPUB viewer timed out before finishing initial load.',
+        );
+      }
+    });
+  }
+
+  Future<File> _writeTempEpub(Uint8List bytes) async {
+    final dir = await getTemporaryDirectory();
+    final file = File(
+      '${dir.path}\\quietly_reader_${widget.bookId}_${DateTime.now().millisecondsSinceEpoch}.epub',
+    );
+    await file.writeAsBytes(bytes, flush: true);
+    return file;
+  }
+
+  int _quickChecksum(Uint8List bytes) {
+    var hash = 2166136261;
+    for (final b in bytes) {
+      hash ^= b;
+      hash = (hash * 16777619) & 0xFFFFFFFF;
+    }
+    return hash;
+  }
+
+  Future<String> _inspectEpubBytes(Uint8List bytes) async {
+    try {
+      final book = await EpubReader.readBook(bytes);
+      final chapterCount = book.Chapters?.length ?? 0;
+      final htmlCount = book.Content?.Html?.length ?? 0;
+      final cssCount = book.Content?.Css?.length ?? 0;
+      final imageCount = book.Content?.Images?.length ?? 0;
+      return 'epubInspection chapters=$chapterCount htmlFiles=$htmlCount cssFiles=$cssCount images=$imageCount';
+    } catch (e) {
+      return 'epubInspection failed: $e';
+    }
+  }
+
+  void _clearEpubController() {
+    _epubLoadTimeoutTimer?.cancel();
+    _epubLoadTimeoutTimer = null;
+    final controller = _epubController;
+    controller?.webViewController = null;
+    _epubController = null;
+    _epubSource = null;
+    _epubLocation = null;
+    _epubChapters = const [];
+    _epubViewerLoaded = false;
+  }
+
+  Future<void> _fallbackFromEpub({required String reason}) async {
+    if (_epubFallbackTriggered) return;
+    _epubFallbackTriggered = true;
+    _epubLoadTimeoutTimer?.cancel();
+
+    _recordDebug(
+      OpenLibraryDebugSnapshot(
+        requestUrl: 'reader://book/${widget.bookId}/epub-fallback',
+        statusCode: null,
+        success: false,
+        bodyLength: 0,
+        bodyPreview: '',
+        resultCount: null,
+        error: '$reason Switching to PDF/text fallback.',
+        timestamp: DateTime.now(),
+      ),
+    );
+
+    try {
+      final epubUrl = _content?.epubSourceUrl;
+      if (epubUrl != null && epubUrl.isNotEmpty) {
+        _recordDebug(
+          OpenLibraryDebugSnapshot(
+            requestUrl: 'reader://book/${widget.bookId}/pdf-fallback-start',
+            statusCode: null,
+            success: true,
+            bodyLength: epubUrl.length,
+            bodyPreview: epubUrl,
+            resultCount: null,
+            error: null,
+            timestamp: DateTime.now(),
+          ),
+        );
+
+        String? pdfText;
+        try {
+          pdfText = await _openLibrary
+              .fetchPdfTextForEpubUrl(
+                epubUrl,
+                onDebug: _recordDebug,
+              )
+              .timeout(const Duration(seconds: 95));
+        } on TimeoutException {
+          _recordDebug(
+            OpenLibraryDebugSnapshot(
+              requestUrl:
+                  'reader://book/${widget.bookId}/pdf-fallback-timeout',
+              statusCode: null,
+              success: false,
+              bodyLength: 0,
+              bodyPreview: '',
+              resultCount: null,
+              error:
+                  'PDF fallback exceeded 95s budget. Continuing with EPUB text extraction.',
+              timestamp: DateTime.now(),
+            ),
+          );
+        }
+
+        if (pdfText != null && pdfText.length >= 500) {
+          if (!mounted) return;
+          _clearEpubController();
+          final resolvedPdfText = pdfText;
+          _recordDebug(
+            OpenLibraryDebugSnapshot(
+              requestUrl: 'reader://book/${widget.bookId}/pdf-text-fallback',
+              statusCode: null,
+              success: true,
+              bodyLength: resolvedPdfText.length,
+              bodyPreview:
+                  resolvedPdfText.length > 240
+                      ? resolvedPdfText.substring(0, 240)
+                      : resolvedPdfText,
+              resultCount: null,
+              error: null,
+              timestamp: DateTime.now(),
+            ),
+          );
+          setState(() {
+            _content = BookContent.text(resolvedPdfText);
+            _error = null;
+          });
+          _buildPages();
+          return;
+        }
+      }
+
+      final extracted = await _extractTextFromCurrentEpub();
+      if (extracted != null && extracted.length >= 500) {
+        if (!mounted) return;
+        _clearEpubController();
+        _recordDebug(
+          OpenLibraryDebugSnapshot(
+            requestUrl: 'reader://book/${widget.bookId}/epub-text-extract-fallback',
+            statusCode: null,
+            success: true,
+            bodyLength: extracted.length,
+            bodyPreview: extracted.length > 240
+                ? extracted.substring(0, 240)
+                : extracted,
+            resultCount: null,
+            error: null,
+            timestamp: DateTime.now(),
+          ),
+        );
+        setState(() {
+          _content = BookContent.text(extracted);
+          _error = null;
+        });
+        _buildPages();
+        return;
+      }
+
+      final book = _book ?? widget.initialBook ?? await _openLibrary.fetchBook(widget.bookId);
+      final fallback = await _openLibrary.fetchBookContent(
+        book,
+        onDebug: _recordDebug,
+        preferEpub: false,
+      );
+      if (!mounted) return;
+
+      _clearEpubController();
+      setState(() {
+        _book = book;
+        _content = fallback;
+        _error = null;
+      });
+      _buildPages();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'EPUB viewer failed and fallback could not be loaded: $e';
+      });
+    }
+  }
+
+  Future<String?> _extractTextFromCurrentEpub() async {
+    final bytes = _content?.epubBytes;
+    if (bytes == null || bytes.isEmpty) return null;
+
+    try {
+      final epub = await EpubReader.readBook(bytes);
+      final htmlFiles = epub.Content?.Html;
+      if (htmlFiles == null || htmlFiles.isEmpty) {
+        _recordDebug(
+          OpenLibraryDebugSnapshot(
+            requestUrl: 'reader://book/${widget.bookId}/epub-text-extract',
+            statusCode: null,
+            success: false,
+            bodyLength: 0,
+            bodyPreview: '',
+            resultCount: 0,
+            error: 'EPUB had no HTML content map to extract text from.',
+            timestamp: DateTime.now(),
+          ),
+        );
+        return null;
+      }
+
+      final keys = htmlFiles.keys.toList()..sort();
+      final buffer = StringBuffer();
+      for (final key in keys) {
+        final lower = key.toLowerCase();
+        if (lower.contains('toc') ||
+            lower.contains('nav') ||
+            lower.contains('contents')) {
+          continue;
+        }
+        final html = htmlFiles[key]?.Content;
+        if (html == null || html.trim().isEmpty) continue;
+        final text = _openLibrary.cleanGutenbergText(
+          _openLibrary.htmlToPlainText(html),
+        );
+        if (text.trim().isEmpty) continue;
+        buffer.writeln(text.trim());
+        buffer.writeln();
+      }
+
+      final extracted = buffer.toString().trim();
+      _recordDebug(
+        OpenLibraryDebugSnapshot(
+          requestUrl: 'reader://book/${widget.bookId}/epub-text-extract',
+          statusCode: null,
+          success: extracted.isNotEmpty,
+          bodyLength: extracted.length,
+          bodyPreview: extracted.isEmpty
+              ? '(empty)'
+              : (extracted.length > 220
+                  ? extracted.substring(0, 220)
+                  : extracted),
+          resultCount: keys.length,
+          error: extracted.isEmpty
+              ? 'EPUB HTML files were present but no readable text was extracted.'
+              : null,
+          timestamp: DateTime.now(),
+        ),
+      );
+      return extracted.isEmpty ? null : extracted;
+    } catch (e) {
+      _recordDebug(
+        OpenLibraryDebugSnapshot(
+          requestUrl: 'reader://book/${widget.bookId}/epub-text-extract',
+          statusCode: null,
+          success: false,
+          bodyLength: 0,
+          bodyPreview: '',
+          resultCount: null,
+          error: 'EPUB text extraction failed: $e',
+          timestamp: DateTime.now(),
+        ),
+      );
+      return null;
+    }
+  }
+
   void _buildPages() {
     final content = _content;
     if (content == null) return;
 
-    if (content.isImageBased) {
-      final imageUrls = content.images!;
-      if (imageUrls.isEmpty) return;
-      final savedPercent =
-          context.read<LibraryProvider>().getProgress(widget.bookId)?.percent ??
-              0;
-      final startPage = (savedPercent * imageUrls.length)
-          .floor()
-          .clamp(0, imageUrls.length - 1)
-          .toInt();
-      final initialCount =
-          (startPage + _pageChunkSize)
-              .clamp(_pageChunkSize, imageUrls.length)
-              .toInt();
-      setState(() {
-        _allPages = imageUrls;
-        _pages = imageUrls.sublist(0, initialCount);
-        _currentPage = startPage;
-      });
-      if (startPage > 0) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _pageController.jumpToPage(startPage);
-        });
-      }
-      _scheduleHide();
-      return;
-    }
 
     final size = MediaQuery.of(context).size;
     if (content.text == null || size.isEmpty) return;
@@ -253,6 +662,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
       lineHeightFactor: settings.lineHeightValue,
       fontFamily: _fontFamilyName(settings.fontFamily),
     );
+    if (allPages.isEmpty) {
+      _recordDebug(
+        OpenLibraryDebugSnapshot(
+          requestUrl: 'reader://book/${widget.bookId}/text-empty-pages',
+          statusCode: null,
+          success: false,
+          bodyLength: content.text?.length ?? 0,
+          bodyPreview: content.text == null ? '' : content.text!.substring(0, content.text!.length > 200 ? 200 : content.text!.length),
+          resultCount: 0,
+          error: 'Text content was loaded, but no readable pages were generated.',
+          timestamp: DateTime.now(),
+        ),
+      );
+      return;
+    }
     final savedPercent =
         context.read<LibraryProvider>().getProgress(widget.bookId)?.percent ??
             0;
@@ -515,7 +939,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final settings =
         context.read<ReaderSettingsProvider>().forBook(widget.bookId);
 
-    if (settings.scrollMode && !_isImageBased) {
+    if (_isEpubBased) {
+      setState(() => _showControls = !_showControls);
+      if (_showControls) _scheduleHide();
+      return;
+    }
+
+    if (settings.scrollMode) {
       // In scroll mode: left/right zones scroll up/down by one screen.
       if (!_scrollController.hasClients) return;
       if (dx < screenWidth * _leftZoneThreshold) {
@@ -539,7 +969,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
 
-    // Page mode: left zone = previous, right zone = next, centre = toggle UI.
+    // Page mode (also handles HTML spine navigation): left = prev, right = next.
+    final pageCount = _isHtmlBased
+        ? (_content?.htmlSpine?.length ?? 0)
+        : _pages.length;
     if (dx < screenWidth * _leftZoneThreshold) {
       if (_currentPage > 0) {
         _pageController.previousPage(
@@ -548,7 +981,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         );
       }
     } else if (dx > screenWidth * _rightZoneThreshold) {
-      if (_currentPage < _pages.length - 1) {
+      if (_currentPage < pageCount - 1) {
         _pageController.nextPage(
           duration: const Duration(milliseconds: 250),
           curve: Curves.easeInOut,
@@ -569,12 +1002,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   void _onPageChanged(int index) {
     setState(() => _currentPage = index);
-    // Load more pages when the user is within 3 pages of the loaded window end.
-    if (_pages.length > 3 && index >= _pages.length - 3) {
+    // Load more text pages when near the end of the loaded window.
+    if (!_isHtmlBased && _pages.length > 3 && index >= _pages.length - 3) {
       _loadMorePages();
     }
-    if (_allPages.isNotEmpty) {
-      final percent = (index + 1) / _allPages.length;
+    final total = _isHtmlBased
+        ? (_content?.htmlSpine?.length ?? 0)
+        : _allPages.length;
+    if (total > 0) {
+      final percent = (index + 1) / total;
       context.read<LibraryProvider>().updateProgress(widget.bookId, percent);
     }
   }
@@ -582,6 +1018,58 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void _recordDebug(OpenLibraryDebugSnapshot snapshot) {
     if (!mounted) return;
     setState(() => _debugSnapshots.add(snapshot));
+  }
+
+  List<OpenLibraryDebugSnapshot> get _debugErrorSnapshots => _debugSnapshots
+      .where((s) => !s.success && (s.error?.trim().isNotEmpty ?? false))
+      .toList();
+
+  String get _debugTooltip {
+    if (_showDebugPanel) return 'Hide API debug info';
+    final errors = _debugErrorSnapshots;
+    if (errors.isEmpty) return 'Show API debug info';
+    final latest = errors.last.error!.trim();
+    return 'Show API debug info (${errors.length} error${errors.length == 1 ? '' : 's'})\nLatest: $latest';
+  }
+
+  Widget _buildDebugButton({Color? color}) {
+    final errorCount = _debugErrorSnapshots.length;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        IconButton(
+          tooltip: _debugTooltip,
+          onPressed: () {
+            setState(() => _showDebugPanel = !_showDebugPanel);
+          },
+          icon: PhosphorIcon(
+            _showDebugPanel ? PhosphorIconsFill.bug : PhosphorIconsRegular.bug,
+            color: color,
+          ),
+        ),
+        if (errorCount > 0)
+          Positioned(
+            right: 6,
+            top: 6,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+              decoration: const BoxDecoration(
+                color: Colors.red,
+                borderRadius: BorderRadius.all(Radius.circular(10)),
+              ),
+              child: Text(
+                errorCount > 9 ? '9+' : '$errorCount',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  height: 1.0,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   String _friendlyReaderError(String error) {
@@ -603,31 +1091,311 @@ class _ReaderScreenState extends State<ReaderScreen> {
     return error;
   }
 
-  Widget _buildImagePage(int index) {
-    return Container(
-      color: Colors.black,
-      child: CachedNetworkImage(
-        imageUrl: _pages[index],
-        fit: BoxFit.contain,
-        placeholder: (context, url) => const Center(
-          child: CircularProgressIndicator(color: Colors.white54),
+  Widget _buildEpubReader(
+    BuildContext context,
+    Color bgColor,
+    Color textColor,
+    Color accentColor,
+  ) {
+    final controller = _epubController;
+    final source = _epubSource;
+    if (controller == null || source == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    final progress = (_epubLocation?.progress ?? 0).clamp(0.0, 1.0);
+
+    return Scaffold(
+      backgroundColor: bgColor,
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTapUp: _onTapUp,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: ColoredBox(
+                color: bgColor,
+                child: EpubViewer(
+                  epubController: controller,
+                  epubSource: source,
+                  onEpubLoaded: () {
+                    if (!mounted) return;
+                    _epubViewerLoaded = true;
+                    _epubLoadTimeoutTimer?.cancel();
+                    _recordDebug(
+                      OpenLibraryDebugSnapshot(
+                        requestUrl:
+                            'reader://book/${widget.bookId}/epub-viewer-state',
+                        statusCode: null,
+                        success: true,
+                        bodyLength: 0,
+                        bodyPreview: 'state=loaded',
+                        resultCount: _epubChapters.length,
+                        error: null,
+                        timestamp: DateTime.now(),
+                      ),
+                    );
+                  },
+                  onChaptersLoaded: (chapters) {
+                    if (!mounted) return;
+                    setState(() => _epubChapters = chapters);
+                    if (chapters.isEmpty && !_epubEmptyContentLogged) {
+                      _epubEmptyContentLogged = true;
+                      _recordDebug(
+                        OpenLibraryDebugSnapshot(
+                          requestUrl:
+                              'reader://book/${widget.bookId}/epub-empty-content',
+                          statusCode: null,
+                          success: false,
+                          bodyLength: 0,
+                          bodyPreview: '',
+                          resultCount: 0,
+                          error:
+                              'EPUB viewer loaded, but no chapters/paragraphs were parsed. Continuing with relocation-based progress.',
+                          timestamp: DateTime.now(),
+                        ),
+                      );
+                    }
+                  },
+                  onRelocated: (location) {
+                    if (!mounted) return;
+                    final pct = location.progress.clamp(0.0, 1.0);
+                    setState(() {
+                      _epubLocation = location;
+                      _currentPage = (pct * 100).round();
+                    });
+                    _scrollDebounce?.cancel();
+                    _scrollDebounce = Timer(
+                      const Duration(milliseconds: 500),
+                      () => context.read<LibraryProvider>().updateProgress(
+                            widget.bookId,
+                            pct,
+                          ),
+                    );
+                  },
+                  onTouchUp: (_, __) {
+                    if (!mounted) return;
+                    setState(() => _showControls = !_showControls);
+                    if (_showControls) _scheduleHide();
+                  },
+                  onSelectionChanging: () {
+                    if (_showControls) setState(() => _showControls = false);
+                  },
+                  onInitialPositionLoading: (kind) {
+                    _recordDebug(
+                      OpenLibraryDebugSnapshot(
+                        requestUrl:
+                            'reader://book/${widget.bookId}/epub-viewer-state',
+                        statusCode: null,
+                        success: true,
+                        bodyLength: 0,
+                        bodyPreview: 'state=initial-position-loading:$kind',
+                        resultCount: _epubChapters.length,
+                        error: null,
+                        timestamp: DateTime.now(),
+                      ),
+                    );
+                  },
+                  onLocationLoaded: () {
+                    _recordDebug(
+                      OpenLibraryDebugSnapshot(
+                        requestUrl:
+                            'reader://book/${widget.bookId}/epub-viewer-state',
+                        statusCode: null,
+                        success: true,
+                        bodyLength: 0,
+                        bodyPreview: 'state=location-map-ready',
+                        resultCount: _epubChapters.length,
+                        error: null,
+                        timestamp: DateTime.now(),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+            ReaderControls(
+              visible: _showControls,
+              // EPUB mode uses relocation progress; chapter count can be empty
+              // or misleading for some books, so avoid chapter-based paging.
+              currentPage: (progress * 100).round().clamp(0, 100),
+              totalPages: 100,
+              readPercent: progress,
+              bgColor: bgColor.withValues(alpha: 0.95),
+              textColor: textColor,
+              accentColor: accentColor,
+              showSettings: false,
+              bookTitle: _book?.title,
+              bookAuthor: _book?.authorName,
+              onBack: () => Navigator.pop(context),
+              onSettings: () {},
+            ),
+            if (kDebugMode)
+              Positioned(
+                top: 4,
+                right: 8,
+                child: SafeArea(
+                  child: IgnorePointer(
+                    ignoring: !_showControls && _debugErrorSnapshots.isEmpty,
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 180),
+                      opacity:
+                          (_showControls || _debugErrorSnapshots.isNotEmpty)
+                              ? 1
+                              : 0,
+                      child: _buildDebugButton(color: textColor),
+                    ),
+                  ),
+                ),
+              ),
+            if (!_epubViewerLoaded)
+              Positioned(
+                top: MediaQuery.of(context).padding.top + 12,
+                left: 0,
+                right: 0,
+                child: IgnorePointer(
+                  ignoring: true,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: bgColor.withValues(alpha: 0.88),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: accentColor.withValues(alpha: 0.18),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: accentColor,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            'Loading EPUB…',
+                            style: TextStyle(
+                              color: textColor,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            if (kDebugMode && _showDebugPanel)
+              Positioned(
+                top: 48,
+                left: 0,
+                right: 0,
+                child: SafeArea(child: _buildDebugPanel()),
+              ),
+          ],
         ),
-        errorWidget: (context, url, error) => const Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              PhosphorIcon(
-                PhosphorIconsRegular.imageSquare,
-                color: Colors.white54,
-                size: 48,
+      ),
+    );
+  }
+
+
+  Widget _buildHtmlReader(
+    BuildContext context,
+    Color bgColor,
+    Color textColor,
+    Color accentColor,
+  ) {
+    final spine = _content!.htmlSpine!;
+    final total = spine.length;
+
+    return Scaffold(
+      backgroundColor: bgColor,
+      body: GestureDetector(
+        onTapUp: _onTapUp,
+        child: Stack(
+          children: [
+            PageView.builder(
+              controller: _pageController,
+              onPageChanged: _onPageChanged,
+              itemCount: total,
+              itemBuilder: (ctx, i) {
+                final screenHeight = MediaQuery.of(ctx).size.height;
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(
+                    _pageHorizontalPadding,
+                    _pageTopPadding,
+                    _pageHorizontalPadding,
+                    _pageBottomPadding,
+                  ),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: screenHeight - _pageTopPadding - _pageBottomPadding,
+                    ),
+                    child: Html(
+                      data: spine[i],
+                      style: {
+                        'body': Style(color: textColor),
+                        'p': Style(color: textColor),
+                        'span': Style(color: textColor),
+                        'div': Style(color: textColor),
+                        'h1': Style(color: textColor, fontWeight: FontWeight.bold),
+                        'h2': Style(color: textColor, fontWeight: FontWeight.bold),
+                        'h3': Style(color: textColor, fontWeight: FontWeight.bold),
+                        'h4': Style(color: textColor, fontWeight: FontWeight.bold),
+                        'a': Style(color: accentColor),
+                      },
+                    ),
+                  ),
+                );
+              },
+            ),
+            ReaderControls(
+              visible: _showControls,
+              currentPage: _currentPage + 1,
+              totalPages: total,
+              readPercent: total > 0 ? (_currentPage + 1) / total : 0.0,
+              bgColor: bgColor.withValues(alpha: 0.95),
+              textColor: textColor,
+              accentColor: accentColor,
+              showSettings: false,
+              bookTitle: _book?.title,
+              bookAuthor: _book?.authorName,
+              onBack: () => Navigator.pop(context),
+              onSettings: () {},
+            ),
+            if (kDebugMode)
+              Positioned(
+                top: 4,
+                right: 8,
+                child: SafeArea(
+                  child: IgnorePointer(
+                    ignoring: !_showControls && _debugErrorSnapshots.isEmpty,
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 180),
+                      opacity:
+                          (_showControls || _debugErrorSnapshots.isNotEmpty)
+                              ? 1
+                              : 0,
+                      child: _buildDebugButton(color: textColor),
+                    ),
+                  ),
+                ),
               ),
-              SizedBox(height: 12),
-              Text(
-                'Image unavailable',
-                style: TextStyle(color: Colors.white54),
+            if (kDebugMode && _showDebugPanel)
+              Positioned(
+                top: 48,
+                left: 0,
+                right: 0,
+                child: SafeArea(child: _buildDebugPanel()),
               ),
-            ],
-          ),
+          ],
         ),
       ),
     );
@@ -847,19 +1615,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return Scaffold(
         appBar: AppBar(
           actions: [
-            if (kDebugMode)
-              IconButton(
-                tooltip:
-                    _showDebugPanel ? 'Hide API debug info' : 'Show API debug info',
-                onPressed: () {
-                  setState(() => _showDebugPanel = !_showDebugPanel);
-                },
-                icon: PhosphorIcon(
-                  _showDebugPanel
-                      ? PhosphorIconsFill.bug
-                      : PhosphorIconsRegular.bug,
-                ),
-              ),
+            if (kDebugMode) _buildDebugButton(),
           ],
         ),
         body: SafeArea(
@@ -929,6 +1685,33 @@ class _ReaderScreenState extends State<ReaderScreen> {
       );
     }
 
+    if (_isEpubBased) {
+      final controller = _epubController;
+      final source = _epubSource;
+      final cs = Theme.of(context).colorScheme;
+      if (controller == null || source == null) {
+        return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      }
+      return _buildEpubReader(
+        context,
+        cs.surface,
+        cs.onSurface,
+        cs.primary,
+      );
+    }
+
+    if (_isHtmlBased) {
+      final settingsProvider = context.watch<ReaderSettingsProvider>();
+      final settings = settingsProvider.forBook(widget.bookId);
+      final colors = _themeColors(settings);
+      return _buildHtmlReader(
+        context,
+        colors['bg']!,
+        colors['text']!,
+        colors['accent']!,
+      );
+    }
+
     final settingsProvider = context.watch<ReaderSettingsProvider>();
     final settings = settingsProvider.forBook(widget.bookId);
     final colors = _themeColors(settings);
@@ -937,7 +1720,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final accentColor = colors['accent']!;
 
     final size = MediaQuery.of(context).size;
-    if (_lastSize != size && _content != null && !_isImageBased) {
+    if (_lastSize != size && _content?.text != null) {
       _lastSize = size;
       WidgetsBinding.instance.addPostFrameCallback((_) => _buildPages());
     }
@@ -952,7 +1735,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
             height: settings.lineHeightValue,
             color: textColor);
 
-    final useScrollMode = settings.scrollMode && !_isImageBased;
+    final useScrollMode = settings.scrollMode;
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -1011,9 +1794,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 controller: _pageController,
                 onPageChanged: _onPageChanged,
                 itemCount: _pages.length,
-                itemBuilder: (ctx, i) => _isImageBased
-                    ? _buildImagePage(i)
-                    : Container(
+                itemBuilder: (ctx, i) => Container(
                         color: bgColor,
                         child: Padding(
                           padding: const EdgeInsets.fromLTRB(
@@ -1035,12 +1816,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
               currentPage: _currentPage + 1,
               totalPages: _allPages.length,
               readPercent: useScrollMode ? _scrollPercent : null,
-              bgColor: _isImageBased
-                  ? Colors.black.withValues(alpha: 0.7)
-                  : bgColor.withValues(alpha: 0.95),
-              textColor: _isImageBased ? Colors.white : textColor,
-              accentColor: _isImageBased ? Colors.white70 : accentColor,
-              showSettings: !_isImageBased,
+              bgColor: bgColor.withValues(alpha: 0.95),
+              textColor: textColor,
+              accentColor: accentColor,
+              showSettings: true,
+              bookTitle: _book?.title,
+              bookAuthor: _book?.authorName,
               onBack: () => Navigator.pop(context),
               onSettings: () {
                 _hideTimer?.cancel();
@@ -1062,24 +1843,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 right: 8,
                 child: SafeArea(
                   child: IgnorePointer(
-                    ignoring: !_showControls,
+                    ignoring: !_showControls && _debugErrorSnapshots.isEmpty,
                     child: AnimatedOpacity(
                       duration: const Duration(milliseconds: 180),
-                      opacity: _showControls ? 1 : 0,
-                      child: IconButton(
-                        tooltip: _showDebugPanel
-                            ? 'Hide API debug info'
-                            : 'Show API debug info',
-                        onPressed: () {
-                          setState(() => _showDebugPanel = !_showDebugPanel);
-                        },
-                        icon: PhosphorIcon(
-                          _showDebugPanel
-                              ? PhosphorIconsFill.bug
-                              : PhosphorIconsRegular.bug,
-                          color: textColor,
-                        ),
-                      ),
+                      opacity:
+                          (_showControls || _debugErrorSnapshots.isNotEmpty)
+                              ? 1
+                              : 0,
+                      child: _buildDebugButton(color: textColor),
                     ),
                   ),
                 ),
