@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:provider/provider.dart';
 import '../providers/library_provider.dart';
@@ -19,22 +20,37 @@ class _ListsScreenState extends State<ListsScreen> {
   @override
   Widget build(BuildContext context) {
     final lib = context.watch<LibraryProvider>();
+    final cs = Theme.of(context).colorScheme;
     final lists = [lib.wishlist, lib.readLater];
     final books = lists[_selected];
     return Scaffold(
-      appBar: AppBar(title: const Text('Lists')),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: SegmentedControlWidget(
-              segments: const ['Wishlist', 'Read Later'],
-              selectedIndex: _selected,
-              onChanged: (i) => setState(() => _selected = i),
+      body: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+              child: Text(
+                'Lists',
+                style: GoogleFonts.lora(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  color: cs.onSurface,
+                ),
+              ),
             ),
-          ),
-          Expanded(child: _buildList(books, lib)),
-        ],
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+              child: SegmentedControlWidget(
+                segments: const ['Wishlist', 'Read Later'],
+                selectedIndex: _selected,
+                onChanged: (i) => setState(() => _selected = i),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Expanded(child: _buildList(books, lib)),
+          ],
+        ),
       ),
     );
   }

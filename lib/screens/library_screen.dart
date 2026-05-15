@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:provider/provider.dart';
 import '../providers/library_provider.dart';
@@ -22,24 +23,38 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Widget build(BuildContext context) {
     final lib = context.watch<LibraryProvider>();
     final suggestions = context.watch<SuggestionsProvider>();
+    final cs = Theme.of(context).colorScheme;
     const segments = ['Reading', 'Downloaded', 'Finished'];
     final lists = [lib.reading, lib.downloaded, lib.finished];
     final books = lists[_selected];
     return Scaffold(
-      appBar: AppBar(title: const Text('Library')),
-      body: Column(
-        children: [
-          _StatsBar(lib: lib, suggestions: suggestions),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: SegmentedControlWidget(
-              segments: segments,
-              selectedIndex: _selected,
-              onChanged: (i) => setState(() => _selected = i),
+      body: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+              child: Text(
+                'Library',
+                style: GoogleFonts.lora(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  color: cs.onSurface,
+                ),
+              ),
             ),
-          ),
-          Expanded(child: _buildList(books, lib)),
-        ],
+            _StatsBar(lib: lib, suggestions: suggestions),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+              child: SegmentedControlWidget(
+                segments: segments,
+                selectedIndex: _selected,
+                onChanged: (i) => setState(() => _selected = i),
+              ),
+            ),
+            Expanded(child: _buildList(books, lib)),
+          ],
+        ),
       ),
     );
   }
