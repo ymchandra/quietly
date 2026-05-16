@@ -743,6 +743,7 @@ class OpenLibraryService {
       final htmlPages = <String>[];
       final seen = <String>{};
       var skippedEmptyPages = 0;
+      var scannedSpinePages = 0;
 
       for (final id in spineIds) {
         var href = idToHref[id];
@@ -759,6 +760,8 @@ class OpenLibraryService {
             lower.endsWith('/nav.xhtml') ||
             lower.endsWith('/nav.html')) continue;
 
+        scannedSpinePages++;
+
         final fullPath = opfDir.isEmpty ? href : '$opfDir$href';
         final file = archive.findFile(fullPath) ?? archive.findFile(href);
         if (file == null) continue;
@@ -769,6 +772,11 @@ class OpenLibraryService {
         );
         if (raw.trim().isEmpty) continue;
         final cleaned = isInternetArchive ? _cleanInternetArchiveHtml(raw) : raw;
+        if (isInternetArchive &&
+            _isInternetArchiveIntroPage(cleaned, spinePosition: scannedSpinePages)) {
+          skippedEmptyPages++;
+          continue;
+        }
         if (_isMeaningfulHtmlPage(cleaned)) {
           htmlPages.add(cleaned);
         } else {
@@ -1877,6 +1885,7 @@ class OpenLibraryService {
         .replaceAll(RegExp(r'<[^>]+>'), '')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
+
     var cleaned = html;
 
     // Remove IA OCR accuracy disclaimer block.
@@ -1911,6 +1920,67 @@ class OpenLibraryService {
     }
 
     return cleaned;
+  }
+
+  /// Returns true when a page looks like IA introductory boilerplate.
+  ///
+  /// This is intentionally conservative and only applies to early spine pages
+  /// to avoid dropping legitimate front-matter or chapter content.
+  bool _isInternetArchiveIntroPage(
+    String html, {
+    required int spinePosition,
+  }) {
+    // IA boilerplate appears at the beginning; do not inspect deep pages.
+    if (spinePosition > 8) return false;
+
+    final plain = htmlToPlainText(html)
+        .replaceAll('\u00A0', ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (plain.isEmpty) return true;
+
+    final lower = plain.toLowerCase();
+    final hasHeading = RegExp(r'<h[1-6]\b', caseSensitive: false).hasMatch(html);
+    final hasChapterLikeText = RegExp(
+      r'\b(chapter|prologue|epilogue|part\s+[ivx0-9]+|preface|foreword|introduction)\b',
+      caseSensitive: false,
+    ).hasMatch(plain);
+
+    // Keep likely real content/title pages.
+    if (hasHeading && hasChapterLikeText) return false;
+
+    // Multi-signal score for IA boilerplate wording variants.
+    var score = 0;
+    if (lower.contains('internet archive') || lower.contains('archive.org')) {
+      score += 2;
+    }
+    if (lower.contains('epub format')) score += 1;
+    if (lower.contains('scanned')) score += 1;
+    if (lower.contains('ocr')) score += 1;
+    if (lower.contains('estimated to be only') ||
+        (lower.contains('%') && lower.contains('accurat'))) {
+      score += 2;
+    }
+    if (lower.contains('converted') && lower.contains('automatically')) {
+      score += 1;
+    }
+    if (lower.contains('digitiz')) score += 1;
+
+    final wordCount = plain.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
+
+    // Drop pages with strong IA boilerplate signal and short explanatory text.
+    if (score >= 4 && !hasChapterLikeText && wordCount <= 380) return true;
+
+    // Extra-safe high-confidence shortcut for known IA lead-in wording.
+    if ((lower.contains('produced in epub format') ||
+            lower.contains('scanned and converted')) &&
+        lower.contains('internet archive') &&
+        wordCount <= 500 &&
+        !hasChapterLikeText) {
+      return true;
+    }
+
+    return false;
   }
 
   /// Strips Internet Archive boilerplate from EPUB HTML pages.
