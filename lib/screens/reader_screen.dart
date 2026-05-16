@@ -68,6 +68,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   bool _epubFallbackTriggered = false;
   bool _epubEmptyContentLogged = false;
   Size? _lastSize;
+  bool _loadingCancelled = false;
 
   /// Session tracking — set when content finishes loading.
   int? _sessionStartMs;
@@ -125,6 +126,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
     super.dispose();
   }
 
+  void _cancelLoading() {
+    _loadingCancelled = true;
+    Navigator.pop(context);
+  }
+
   Future<void> _load() async {
     if (mounted) {
       setState(() {
@@ -149,144 +155,32 @@ class _ReaderScreenState extends State<ReaderScreen> {
           ),
         );
       }
+      if (_loadingCancelled) return;
       final offlineEpub = await _storage.getOfflineEpubFile(widget.bookId);
       if (offlineEpub != null) {
-        final bytes = await offlineEpub.readAsBytes();
-        final localBook = book ??
-            Book(
-              id: widget.bookId,
-              title: 'EPUB Book',
-              authors: const [],
-              subjects: const [],
-              bookshelves: const [],
-              languages: const [],
-              formats: const {},
-              downloadCount: 0,
-            );
-        if (mounted) {
-          await _setEpubController(bytes);
-          setState(() {
-            _book = localBook;
-            _content = BookContent.epub(bytes);
-            _loading = false;
-          });
-          final sp = context.read<SuggestionsProvider>();
-          sp.recordBookOpened(localBook);
-          _suggestionsProvider = sp;
-          _sessionStartMs = DateTime.now().millisecondsSinceEpoch;
-          _sessionStartPage = _currentPage;
-        }
-        return;
+        if (_loadingCancelled) return;
+        // ...existing code...
       }
 
+      if (_loadingCancelled) return;
       final offline = await _storage.getOfflineText(widget.bookId);
       if (offline != null) {
-        final localBook = book ??
-            Book(
-              id: widget.bookId,
-              title: 'Saved Book',
-              authors: const [],
-              subjects: const [],
-              bookshelves: const [],
-              languages: const [],
-              formats: const {},
-              downloadCount: 0,
-            );
-        _recordDebug(
-          OpenLibraryDebugSnapshot(
-            requestUrl: 'reader://book/${widget.bookId}/offline',
-            statusCode: null,
-            success: true,
-            bodyLength: offline.length,
-            bodyPreview: 'Loaded offline text from local storage.',
-            resultCount: 1,
-            error: null,
-            timestamp: DateTime.now(),
-          ),
-        );
-        if (mounted) {
-          setState(() {
-            _book = localBook;
-            _content = BookContent.text(offline);
-            _loading = false;
-          });
-          _buildPages();
-          final sp = context.read<SuggestionsProvider>();
-          sp.recordBookOpened(localBook);
-          _suggestionsProvider = sp;
-          _sessionStartMs = DateTime.now().millisecondsSinceEpoch;
-          _sessionStartPage = _currentPage;
-        }
-        return;
+        // ...existing code...
       }
 
+      if (_loadingCancelled) return;
       book ??= await _openLibrary.fetchBook(widget.bookId);
+      if (_loadingCancelled) return;
       final content = await _openLibrary.fetchBookContent(
         book,
         onDebug: _recordDebug,
       );
+      if (_loadingCancelled) return;
       if (mounted) {
-        if (content.isEpubBased && content.epubBytes != null) {
-          // Try browser-style HTML spine extraction first — most reliable path
-          final spine = await _openLibrary.extractEpubHtmlSpine(
-            content.epubBytes!,
-            onDebug: _recordDebug,
-          );
-          if (spine != null && spine.isNotEmpty) {
-            setState(() {
-              _book = book;
-              _content = BookContent.html(
-                spine,
-                epubSourceUrl: content.epubSourceUrl,
-              );
-              _loading = false;
-              _currentPage = 0;
-            });
-            _restoreHtmlProgress();
-          } else {
-            // HTML extraction yielded nothing — fall back to EPUB viewer
-            await _setEpubController(content.epubBytes!);
-            setState(() {
-              _book = book;
-              _content = content;
-              _loading = false;
-            });
-          }
-        } else {
-          _clearEpubController();
-          setState(() {
-            _book = book;
-            _content = content;
-            _loading = false;
-          });
-          _buildPages();
-        }
-        // Record the reading event so Discover can refine suggestions.
-        final sp = context.read<SuggestionsProvider>();
-        sp.recordBookOpened(book);
-        _suggestionsProvider = sp;
-        _sessionStartMs = DateTime.now().millisecondsSinceEpoch;
-        _sessionStartPage = _currentPage;
+        // ...existing code...
       }
     } catch (e) {
-      _recordDebug(
-        OpenLibraryDebugSnapshot(
-          requestUrl: 'reader://book/${widget.bookId}/load',
-          statusCode: null,
-          success: false,
-          bodyLength: 0,
-          bodyPreview: '',
-          resultCount: null,
-          error: e.toString(),
-          timestamp: DateTime.now(),
-        ),
-      );
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _loading = false;
-        });
-      }
+      // ...existing code...
     }
   }
 
@@ -1474,132 +1368,148 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final cs = Theme.of(context).colorScheme;
     return Scaffold(
       body: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                // Book Cover with Hero Animation
-                if (book?.coverUrl != null)
-                  Hero(
-                    tag: 'book-cover-${book!.id}',
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: CachedNetworkImage(
-                        imageUrl: book.coverUrl!,
+        child: Stack(
+          children: [
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Book Cover with Hero Animation
+                    if (book?.coverUrl != null)
+                      Hero(
+                        tag: 'book-cover-${book!.id}',
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: CachedNetworkImage(
+                            imageUrl: book.coverUrl!,
+                            width: 100,
+                            height: 150,
+                            fit: BoxFit.cover,
+                            placeholder: (_, __) => Container(
+                              width: 100,
+                              height: 150,
+                              decoration: BoxDecoration(
+                                color: cs.secondary,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            errorWidget: (_, __, ___) => Container(
+                              width: 100,
+                              height: 150,
+                              decoration: BoxDecoration(
+                                color: cs.secondary,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              alignment: Alignment.center,
+                              child: PhosphorIcon(
+                                PhosphorIconsRegular.book,
+                                size: 40,
+                                color: cs.onSurface.withValues(alpha: 0.3),
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      Container(
                         width: 100,
                         height: 150,
-                        fit: BoxFit.cover,
-                        placeholder: (_, __) => Container(
-                          width: 100,
-                          height: 150,
-                          decoration: BoxDecoration(
-                            color: cs.secondary,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+                        decoration: BoxDecoration(
+                          color: cs.secondary,
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        errorWidget: (_, __, ___) => Container(
-                          width: 100,
-                          height: 150,
-                          decoration: BoxDecoration(
-                            color: cs.secondary,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          alignment: Alignment.center,
-                          child: PhosphorIcon(
-                            PhosphorIconsRegular.book,
-                            size: 40,
-                            color: cs.onSurface.withValues(alpha: 0.3),
-                          ),
+                        alignment: Alignment.center,
+                        child: PhosphorIcon(
+                          PhosphorIconsRegular.book,
+                          size: 40,
+                          color: cs.onSurface.withValues(alpha: 0.3),
                         ),
                       ),
-                    ),
-                  )
-                else
-                  Container(
-                    width: 100,
-                    height: 150,
-                    decoration: BoxDecoration(
-                      color: cs.secondary,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    alignment: Alignment.center,
-                    child: PhosphorIcon(
-                      PhosphorIconsRegular.book,
-                      size: 40,
-                      color: cs.onSurface.withValues(alpha: 0.3),
-                    ),
-                  ),
-                const SizedBox(height: 24),
-                // Book Title
-                if (book != null)
-                  Text(
-                    book.title,
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.lora(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: cs.onSurface,
-                    ),
-                  )
-                else
-                  const SizedBox.shrink(),
-                const SizedBox(height: 6),
-                // Book Author
-                if (book != null)
-                  Text(
-                    book.authorName,
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: cs.onSurface.withValues(alpha: 0.65),
-                    ),
-                  )
-                else
-                  const SizedBox.shrink(),
-                const SizedBox(height: 32),
-                // Loading Indicator with Text
-                Column(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: SizedBox(
-                        height: 4,
-                        width: 60,
-                        child: LinearProgressIndicator(
-                          minHeight: 4,
-                          backgroundColor: cs.primary.withValues(alpha: 0.15),
-                          valueColor: AlwaysStoppedAnimation<Color>(cs.primary),
+                    const SizedBox(height: 24),
+                    // Book Title
+                    if (book != null)
+                      Text(
+                        book.title,
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.lora(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          color: cs.onSurface,
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Preparing your book...',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: cs.onSurface.withValues(alpha: 0.7),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Loading content & setting up reader',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: cs.onSurface.withValues(alpha: 0.5),
-                      ),
+                      )
+                    else
+                      const SizedBox.shrink(),
+                    const SizedBox(height: 6),
+                    // Book Author
+                    if (book != null)
+                      Text(
+                        book.authorName,
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: cs.onSurface.withValues(alpha: 0.65),
+                        ),
+                      )
+                    else
+                      const SizedBox.shrink(),
+                    const SizedBox(height: 32),
+                    // Loading Indicator with Text
+                    Column(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: SizedBox(
+                            height: 4,
+                            width: 60,
+                            child: LinearProgressIndicator(
+                              minHeight: 4,
+                              backgroundColor: cs.primary.withValues(alpha: 0.15),
+                              valueColor: AlwaysStoppedAnimation<Color>(cs.primary),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Preparing your book...',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: cs.onSurface.withValues(alpha: 0.7),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Loading content & setting up reader',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: cs.onSurface.withValues(alpha: 0.5),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
+              ),
             ),
-          ),
+            // Back button in top-left
+            Positioned(
+              top: 8,
+              left: 8,
+              child: SafeArea(
+                child: IconButton(
+                  onPressed: _cancelLoading,
+                  icon: const PhosphorIcon(PhosphorIconsRegular.arrowLeft),
+                  tooltip: 'Cancel',
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1607,8 +1517,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // If loading, allow user to cancel via back button
     if (_loading) {
-      return _buildLoadingScreen(widget.initialBook);
+      return WillPopScope(
+        onWillPop: () async {
+          _cancelLoading();
+          return true;
+        },
+        child: _buildLoadingScreen(widget.initialBook),
+      );
     }
     if (_error != null) {
       final cs = Theme.of(context).colorScheme;
@@ -1666,7 +1583,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
                             ),
                             const SizedBox(width: 12),
                             FilledButton.icon(
-                              onPressed: _load,
+                              onPressed: () {
+                                setState(() {
+                                  _loading = true;
+                                  _error = null;
+                                  _loadingCancelled = false;
+                                });
+                                _load();
+                              },
                               icon: const PhosphorIcon(
                                   PhosphorIconsRegular.arrowClockwise,
                                   size: 18),
@@ -1684,6 +1608,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         ),
       );
     }
+
 
     if (_isEpubBased) {
       final controller = _epubController;
