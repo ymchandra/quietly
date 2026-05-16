@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'app.dart';
+import 'providers/genres_provider.dart';
 import 'providers/library_provider.dart';
 import 'providers/reader_settings_provider.dart';
 import 'providers/suggestions_provider.dart';
@@ -12,6 +13,7 @@ void main() async {
   final readerSettings = ReaderSettingsProvider();
   final userProfile = UserProfileProvider();
   final suggestions = SuggestionsProvider();
+  final genres = GenresProvider();
   await Future.wait([
     library.init(),
     readerSettings.init(),
@@ -25,6 +27,7 @@ void main() async {
         ChangeNotifierProvider.value(value: readerSettings),
         ChangeNotifierProvider.value(value: userProfile),
         ChangeNotifierProvider.value(value: suggestions),
+        ChangeNotifierProvider.value(value: genres),
       ],
       child: QuietlyApp(userProfile: userProfile),
     ),

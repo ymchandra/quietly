@@ -294,7 +294,6 @@ class OpenLibraryService {
     return null;
   }
 
-
   Future<String> fetchBookText(
     Book book, {
     void Function(OpenLibraryDebugSnapshot snapshot)? onDebug,
@@ -323,8 +322,9 @@ class OpenLibraryService {
           bodyLength: discovered.join('\n').length,
           bodyPreview: discovered.isEmpty ? '(none)' : discovered.join('\n'),
           resultCount: discovered.length,
-          error:
-              discovered.isEmpty ? 'No additional text sources discovered.' : null,
+          error: discovered.isEmpty
+              ? 'No additional text sources discovered.'
+              : null,
           timestamp: DateTime.now(),
         ),
       );
@@ -353,7 +353,8 @@ class OpenLibraryService {
         );
         if (resp.statusCode == 200) {
           // Skip responses with a non-text content-type (e.g. image/jpeg, application/pdf).
-          final contentType = (resp.headers['content-type'] ?? '').toLowerCase();
+          final contentType =
+              (resp.headers['content-type'] ?? '').toLowerCase();
           final isNonText = contentType.isNotEmpty &&
               !contentType.contains('text/') &&
               !contentType.contains('application/octet-stream');
@@ -397,8 +398,7 @@ class OpenLibraryService {
           final trimmedLower = raw.trimLeft().toLowerCase();
           final looksLikeHtml = trimmedLower.startsWith('<!doctype') ||
               trimmedLower.startsWith('<html');
-          final expectHtml =
-              url.contains('.html') || url.contains('/html');
+          final expectHtml = url.contains('.html') || url.contains('/html');
 
           String processedText;
           if (expectHtml || looksLikeHtml) {
@@ -409,7 +409,8 @@ class OpenLibraryService {
 
           // Skip results that are too short or too noisy to be genuine book
           // content (likely an error page, OCR garbage, or an empty/stub file).
-          if (processedText.length < 500 || !_looksLikeReadableText(processedText)) {
+          if (processedText.length < 500 ||
+              !_looksLikeReadableText(processedText)) {
             onDebug?.call(
               OpenLibraryDebugSnapshot(
                 requestUrl: url,
@@ -504,20 +505,28 @@ class OpenLibraryService {
         .split(RegExp(r'\s+'))
         .where((w) => w.isNotEmpty && w.length <= 2)
         .length;
-    return wordMatches.length * 3 + alphaCount / 25 - replacementCount * 6 - controlCount * 4 - shortTokens * 0.3;
+    return wordMatches.length * 3 +
+        alphaCount / 25 -
+        replacementCount * 6 -
+        controlCount * 4 -
+        shortTokens * 0.3;
   }
 
   bool _looksLikeReadableText(String text) {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return false;
-    final words = trimmed.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    final words =
+        trimmed.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
     if (words.length < 50) return false;
     final readableWords = words.where((w) => w.length >= 3).length;
     final letterCount = RegExp(r'[A-Za-z]').allMatches(trimmed).length;
-    final symbolCount = RegExp(r'[^A-Za-z0-9\s\.,;:!?()\[\]\-]').allMatches(trimmed).length;
+    final symbolCount =
+        RegExp(r'[^A-Za-z0-9\s\.,;:!?()\[\]\-]').allMatches(trimmed).length;
     final readableRatio = readableWords / words.length;
     final letterRatio = letterCount / trimmed.length;
-    return readableRatio >= 0.55 && letterRatio >= 0.35 && symbolCount / trimmed.length <= 0.15;
+    return readableRatio >= 0.55 &&
+        letterRatio >= 0.35 &&
+        symbolCount / trimmed.length <= 0.15;
   }
 
   /// Fetches the IIIF manifest for the given archive.org item and returns an
@@ -698,8 +707,9 @@ class OpenLibraryService {
       ).firstMatch(containerXml);
       if (opfPathMatch == null) return null;
       final opfPath = opfPathMatch.group(1)!;
-      final opfDir =
-          opfPath.contains('/') ? '${opfPath.substring(0, opfPath.lastIndexOf('/') + 1)}' : '';
+      final opfDir = opfPath.contains('/')
+          ? '${opfPath.substring(0, opfPath.lastIndexOf('/') + 1)}'
+          : '';
 
       // 2. OPF → manifest + spine
       final opfFile = archive.findFile(opfPath);
@@ -771,9 +781,11 @@ class OpenLibraryService {
           allowMalformed: true,
         );
         if (raw.trim().isEmpty) continue;
-        final cleaned = isInternetArchive ? _cleanInternetArchiveHtml(raw) : raw;
+        final cleaned =
+            isInternetArchive ? _cleanInternetArchiveHtml(raw) : raw;
         if (isInternetArchive &&
-            _isInternetArchiveIntroPage(cleaned, spinePosition: scannedSpinePages)) {
+            _isInternetArchiveIntroPage(cleaned,
+                spinePosition: scannedSpinePages)) {
           skippedEmptyPages++;
           continue;
         }
@@ -788,7 +800,9 @@ class OpenLibraryService {
       if (htmlPages.isEmpty) {
         final fallbackFiles = archive.files.where((f) {
           final n = f.name.toLowerCase();
-          return (n.endsWith('.html') || n.endsWith('.xhtml') || n.endsWith('.htm')) &&
+          return (n.endsWith('.html') ||
+                  n.endsWith('.xhtml') ||
+                  n.endsWith('.htm')) &&
               !n.contains('toc') &&
               !n.contains('ncx') &&
               !n.endsWith('nav.xhtml') &&
@@ -799,7 +813,8 @@ class OpenLibraryService {
         for (final f in fallbackFiles) {
           final raw = utf8.decode(f.content as List<int>, allowMalformed: true);
           if (raw.trim().isNotEmpty) {
-            final cleaned = isInternetArchive ? _cleanInternetArchiveHtml(raw) : raw;
+            final cleaned =
+                isInternetArchive ? _cleanInternetArchiveHtml(raw) : raw;
             if (_isMeaningfulHtmlPage(cleaned)) {
               htmlPages.add(cleaned);
             } else {
@@ -828,9 +843,11 @@ class OpenLibraryService {
           final fullPath = opfDir.isEmpty ? href : '$opfDir$href';
           final file = archive.findFile(fullPath) ?? archive.findFile(href);
           if (file == null) continue;
-          final raw = utf8.decode(file.content as List<int>, allowMalformed: true);
+          final raw =
+              utf8.decode(file.content as List<int>, allowMalformed: true);
           if (raw.trim().isEmpty) continue;
-          htmlPages.add(isInternetArchive ? _cleanInternetArchiveHtml(raw) : raw);
+          htmlPages
+              .add(isInternetArchive ? _cleanInternetArchiveHtml(raw) : raw);
         }
       }
 
@@ -842,7 +859,9 @@ class OpenLibraryService {
         bodyPreview:
             'spineItems=${spineIds.length} htmlPages=${htmlPages.length} skippedEmpty=$skippedEmptyPages',
         resultCount: htmlPages.length,
-        error: htmlPages.isEmpty ? 'No readable HTML pages found in EPUB spine.' : null,
+        error: htmlPages.isEmpty
+            ? 'No readable HTML pages found in EPUB spine.'
+            : null,
         timestamp: DateTime.now(),
       ));
 
@@ -914,7 +933,8 @@ class OpenLibraryService {
               statusCode: resp.statusCode,
               success: false,
               bodyLength: resp.bodyBytes.length,
-              bodyPreview: 'elapsedMs=${sw.elapsedMilliseconds}\n${_preview(resp.body)}',
+              bodyPreview:
+                  'elapsedMs=${sw.elapsedMilliseconds}\n${_preview(resp.body)}',
               resultCount: null,
               error: 'HTTP ${resp.statusCode}',
               timestamp: DateTime.now(),
@@ -955,7 +975,8 @@ class OpenLibraryService {
               statusCode: resp.statusCode,
               success: false,
               bodyLength: resp.bodyBytes.length,
-              bodyPreview: 'elapsedMs=${sw.elapsedMilliseconds}\nContent-Type: $contentType',
+              bodyPreview:
+                  'elapsedMs=${sw.elapsedMilliseconds}\nContent-Type: $contentType',
               resultCount: null,
               error: 'Source is not PDF content',
               timestamp: DateTime.now(),
@@ -1006,7 +1027,8 @@ class OpenLibraryService {
               statusCode: resp.statusCode,
               success: false,
               bodyLength: resp.bodyBytes.length,
-              bodyPreview: 'elapsedMs=${sw.elapsedMilliseconds}\n${cleaned.isEmpty ? '(empty)' : _preview(cleaned)}',
+              bodyPreview:
+                  'elapsedMs=${sw.elapsedMilliseconds}\n${cleaned.isEmpty ? '(empty)' : _preview(cleaned)}',
               resultCount: null,
               error: cleaned.length < 500
                   ? 'PDF extracted insufficient content (${cleaned.length} chars)'
@@ -1023,7 +1045,8 @@ class OpenLibraryService {
             statusCode: resp.statusCode,
             success: true,
             bodyLength: resp.bodyBytes.length,
-            bodyPreview: 'elapsedMs=${sw.elapsedMilliseconds}\n${_preview(cleaned)}',
+            bodyPreview:
+                'elapsedMs=${sw.elapsedMilliseconds}\n${_preview(cleaned)}',
             resultCount: null,
             error: null,
             timestamp: DateTime.now(),
@@ -1106,7 +1129,6 @@ class OpenLibraryService {
     });
   }
 
-
   OpenLibraryResponse _parseSearchResponse(
     Map<String, dynamic> json,
     Uri uri,
@@ -1154,7 +1176,8 @@ class OpenLibraryService {
         .toList();
     final formats = <String, String>{
       if (doc['cover_i'] != null)
-        'image/jpeg': 'https://covers.openlibrary.org/b/id/${doc['cover_i']}-L.jpg',
+        'image/jpeg':
+            'https://covers.openlibrary.org/b/id/${doc['cover_i']}-L.jpg',
       'openlibrary/work_key': key,
     };
     final textSources = _collectTextSources(doc);
@@ -1193,7 +1216,6 @@ class OpenLibraryService {
     );
   }
 
-
   Book _mapWorkDetailsToBook(Map<String, dynamic> data, int fallbackId) {
     final key = data['key'] as String? ?? '/works/OL${fallbackId}W';
     final id = _workKeyToId(key);
@@ -1208,7 +1230,8 @@ class OpenLibraryService {
       languages: const ['eng'],
       formats: {
         if (covers.isNotEmpty)
-          'image/jpeg': 'https://covers.openlibrary.org/b/id/${covers.first}-L.jpg',
+          'image/jpeg':
+              'https://covers.openlibrary.org/b/id/${covers.first}-L.jpg',
         'openlibrary/work_key': key,
       },
       downloadCount: 0,
@@ -1228,7 +1251,8 @@ class OpenLibraryService {
       final jsonData = json.decode(resp.body) as Map<String, dynamic>;
       final docs = jsonData['docs'] as List<dynamic>? ?? [];
       if (docs.isEmpty || docs.first is! Map<String, dynamic>) return base;
-      final searchBook = _mapSearchDocToBook(docs.first as Map<String, dynamic>);
+      final searchBook =
+          _mapSearchDocToBook(docs.first as Map<String, dynamic>);
       if (searchBook == null) return base;
       return _mergeBooks(primary: searchBook, fallback: base);
     } catch (_) {
@@ -1247,10 +1271,9 @@ class OpenLibraryService {
     // Prefer the most informative ebook access value: a known non-unknown value
     // from primary takes precedence; otherwise fall back to primary's value,
     // then fallback's value.
-    final mergedEbookAccess =
-        primary.ebookAccess != EbookAccess.unknown
-            ? primary.ebookAccess
-            : fallback.ebookAccess;
+    final mergedEbookAccess = primary.ebookAccess != EbookAccess.unknown
+        ? primary.ebookAccess
+        : fallback.ebookAccess;
     return Book(
       id: fallback.id,
       title: primary.title.isNotEmpty ? primary.title : fallback.title,
@@ -1397,7 +1420,8 @@ class OpenLibraryService {
     var value = raw.trim();
     if (value.isEmpty) return null;
 
-    final urlMatch = RegExp(r'archive\.org/(?:details|download)/([^/?#]+)', caseSensitive: false)
+    final urlMatch = RegExp(r'archive\.org/(?:details|download)/([^/?#]+)',
+            caseSensitive: false)
         .firstMatch(value);
     if (urlMatch != null) {
       value = urlMatch.group(1) ?? value;
@@ -1522,7 +1546,8 @@ class OpenLibraryService {
         if (ocaid is String && ocaid.trim().isNotEmpty) {
           final normalized = _normalizeIaId(ocaid);
           if (normalized != null) {
-            sources.add('https://archive.org/download/$normalized/$normalized.epub');
+            sources.add(
+                'https://archive.org/download/$normalized/$normalized.epub');
           }
         }
       }
@@ -1580,11 +1605,9 @@ class OpenLibraryService {
         RegExp(r'<style[^>]*>.*?</style>', dotAll: true, caseSensitive: false),
         '');
     text = text.replaceAll(
-        RegExp(r'</?(p|div|h[1-6]|li|tr|br|hr)[^>]*>',
-            caseSensitive: false),
+        RegExp(r'</?(p|div|h[1-6]|li|tr|br|hr)[^>]*>', caseSensitive: false),
         '\n\n');
-    text = text.replaceAll(
-        RegExp(r'<br\s*/?>', caseSensitive: false), '\n');
+    text = text.replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n');
     text = text.replaceAll(RegExp(r'<[^>]+>'), '');
     text = _decodeEntities(text);
     return text;
@@ -1611,16 +1634,16 @@ class OpenLibraryService {
         .replaceAll('&emsp;', '\u2003')
         // Hex numeric character references &#xNN; or &#XNN;
         .replaceAllMapped(RegExp(r'&#[xX]([0-9a-fA-F]+);'), (m) {
-          final code = int.tryParse(m.group(1)!, radix: 16);
-          if (code != null) return String.fromCharCodes([code]);
-          return m.group(0)!;
-        })
+      final code = int.tryParse(m.group(1)!, radix: 16);
+      if (code != null) return String.fromCharCodes([code]);
+      return m.group(0)!;
+    })
         // Decimal numeric character references &#NN;
         .replaceAllMapped(RegExp(r'&#(\d+);'), (m) {
-          final code = int.tryParse(m.group(1)!);
-          if (code != null) return String.fromCharCodes([code]);
-          return m.group(0)!;
-        });
+      final code = int.tryParse(m.group(1)!);
+      if (code != null) return String.fromCharCodes([code]);
+      return m.group(0)!;
+    });
   }
 
   /// Returns true if an EPUB HTML page has meaningful visible content.
@@ -1637,7 +1660,8 @@ class OpenLibraryService {
     if (plain.isEmpty) return false;
 
     // Keep heading-only pages such as "Chapter I".
-    final hasHeadingTag = RegExp(r'<h[1-6]\b', caseSensitive: false).hasMatch(html);
+    final hasHeadingTag =
+        RegExp(r'<h[1-6]\b', caseSensitive: false).hasMatch(html);
     final alphaCount = RegExp(r'[A-Za-z]').allMatches(plain).length;
     if (hasHeadingTag && alphaCount >= 3) return true;
 
@@ -1661,8 +1685,7 @@ class OpenLibraryService {
     if (startMatch != null) {
       text = text.substring(startMatch.end);
     }
-    final endRegex = RegExp(
-        r'\*{3}\s*END OF (THE|THIS) PROJECT GUTENBERG',
+    final endRegex = RegExp(r'\*{3}\s*END OF (THE|THIS) PROJECT GUTENBERG',
         caseSensitive: false);
     final endMatch = endRegex.firstMatch(text);
     if (endMatch != null) {
@@ -1695,10 +1718,8 @@ class OpenLibraryService {
     final paragraphBreak = RegExp(r'\n{2,}');
     final paragraphs = text.split(paragraphBreak);
     text = paragraphs
-        .map((para) => para
-            .replaceAll('\n', ' ')
-            .replaceAll(RegExp(r' {2,}'), ' ')
-            .trim())
+        .map((para) =>
+            para.replaceAll('\n', ' ').replaceAll(RegExp(r' {2,}'), ' ').trim())
         .where((para) => para.isNotEmpty)
         .join('\n\n');
 
@@ -1828,7 +1849,13 @@ class OpenLibraryService {
 
     // Restrict checks to metadata field values to avoid false positives from
     // unrelated URLs elsewhere in the OPF.
-    const fields = ['publisher', 'creator', 'contributor', 'source', 'description'];
+    const fields = [
+      'publisher',
+      'creator',
+      'contributor',
+      'source',
+      'description'
+    ];
     for (final field in fields) {
       final value = RegExp(
             '<(?:dc:)?$field\\b[^>]*>(.*?)</(?:dc:)?$field>',
@@ -1868,10 +1895,11 @@ class OpenLibraryService {
   String _cleanInternetArchiveHtml(String html) {
     // Only apply cleaning if this page carries clear IA markers.
     final headMatch = RegExp(
-      r'<head\b[^>]*>(.*?)</head>',
-      caseSensitive: false,
-      dotAll: true,
-    ).firstMatch(html)?.group(1) ?? '';
+          r'<head\b[^>]*>(.*?)</head>',
+          caseSensitive: false,
+          dotAll: true,
+        ).firstMatch(html)?.group(1) ??
+        '';
 
     final hasIaMeta = RegExp(
       r'<meta\b[^>]*(?:ocr[_-]|archive\.org|internetarchive|internet\s*archive)[^>]*>',
@@ -1940,7 +1968,8 @@ class OpenLibraryService {
     if (plain.isEmpty) return true;
 
     final lower = plain.toLowerCase();
-    final hasHeading = RegExp(r'<h[1-6]\b', caseSensitive: false).hasMatch(html);
+    final hasHeading =
+        RegExp(r'<h[1-6]\b', caseSensitive: false).hasMatch(html);
     final hasChapterLikeText = RegExp(
       r'\b(chapter|prologue|epilogue|part\s+[ivx0-9]+|preface|foreword|introduction)\b',
       caseSensitive: false,
@@ -1966,7 +1995,8 @@ class OpenLibraryService {
     }
     if (lower.contains('digitiz')) score += 1;
 
-    final wordCount = plain.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
+    final wordCount =
+        plain.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
 
     // Drop pages with strong IA boilerplate signal and short explanatory text.
     if (score >= 4 && !hasChapterLikeText && wordCount <= 380) return true;
@@ -1989,5 +2019,3 @@ class OpenLibraryService {
   @Deprecated('Use _cleanInternetArchiveHtml with OPF-based detection instead.')
   String _cleanArchiveHtml(String html) => _cleanInternetArchiveHtml(html);
 }
-
-

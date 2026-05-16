@@ -10,6 +10,7 @@ import 'screens/book_detail_screen.dart';
 import 'screens/reader_screen.dart';
 import 'screens/main_screen.dart';
 import 'screens/topic_books_screen.dart';
+import 'screens/genre_books_screen.dart';
 import 'screens/stats_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'models/book.dart';
@@ -100,6 +101,14 @@ class _QuietlyAppState extends State<QuietlyApp> {
           builder: (_, state) => TopicBooksScreen(
             topic: state.pathParameters['topic']!,
             label: state.uri.queryParameters['label'] ?? 'Category',
+          ),
+        ),
+        GoRoute(
+          parentNavigatorKey: _rootNavigatorKey,
+          path: '/discover/genre/:key',
+          builder: (_, state) => GenreBooksScreen(
+            genreKey: state.pathParameters['key']!,
+            genreName: state.uri.queryParameters['name'] ?? 'Genre',
           ),
         ),
         GoRoute(

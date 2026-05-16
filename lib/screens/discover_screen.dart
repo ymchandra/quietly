@@ -7,7 +7,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:provider/provider.dart';
 import '../models/book.dart';
+import '../models/genre.dart';
 import '../models/reading_history.dart';
+import '../providers/genres_provider.dart';
 import '../providers/suggestions_provider.dart';
 import '../providers/user_profile_provider.dart';
 import '../services/openlibrary_service.dart';
@@ -60,6 +62,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
   List<Map<String, String>> _topics = [];
   bool _initialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+  }
 
   @override
   void didChangeDependencies() {
@@ -165,10 +172,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     final cached = await _storage.getShelfCache('readable');
     if (cached != null && cached.isNotEmpty && mounted) {
       setState(() {
-        _readableBooks = cached
-            .where(_isFreeToRead)
-            .take(_previewCount)
-            .toList();
+        _readableBooks =
+            cached.where(_isFreeToRead).take(_previewCount).toList();
         _readableBooksLoading = false;
         _readableBooksError = null;
       });
@@ -185,10 +190,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         ebookAccess: 'public_domain',
       );
       if (mounted) {
-        final books = resp.results
-            .where(_isFreeToRead)
-            .take(_previewCount)
-            .toList();
+        final books =
+            resp.results.where(_isFreeToRead).take(_previewCount).toList();
         setState(() {
           _readableBooks = books;
           _readableBooksLoading = false;
@@ -373,18 +376,24 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     final showSuggestionsLoading =
         suggestions.isLoading && suggestionGroups.isEmpty;
 
+    final genres = context.watch<GenresProvider>();
+
     return ListView.builder(
       padding: const EdgeInsets.only(bottom: 16),
       physics: const AlwaysScrollableScrollPhysics(),
-      // Extra items for the "For You" header + suggestion shelves (or shimmer)
-      // + 1 for the "Free to Read" shelf.
+      // Structure:
+      // - "For You" header + suggestion shelves (or shimmer)
+      // - Topic shelves
+      // - "Free to Read" shelf
+      // - "Explore Genres" shelf (at the bottom)
       itemCount: _topics.length +
           (showSuggestions
               ? 1 + suggestionGroups.length
               : showSuggestionsLoading
                   ? 2
                   : 0) +
-          1, // readable shelf
+          1 + // readable shelf
+          1, // genres shelf (always visible at bottom)
       itemBuilder: (context, i) {
         // ── For You section ────────────────────────────────────────────────
         final forYouCount = showSuggestions
@@ -405,108 +414,118 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           }
         }
 
+        // ── Topic shelves ──────────────────────────────────────────────────
+        // Offset for topics = forYouCount (after "For You" section)
+        if (i < forYouCount + _topics.length) {
+          final topicIndex = i - forYouCount;
+          final t = _topics[topicIndex];
+          final topic = t['topic']!;
+          final label = t['label']!;
+          if (!_requestedTopics.contains(topic)) {
+            _requestedTopics.add(topic);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _loadShelf(topic);
+            });
+          }
+          final books = _shelves[topic] ?? [];
+          final loading = _loading[topic] ?? false;
+          final shelfError = _shelfErrors[topic];
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: GoogleFonts.lora(
+                            fontSize: 18, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        _storage.incrementDiscoverMetric(
+                            'discover_show_all_topic_tap');
+                        context.push(
+                          '/discover/topic/$topic?label=${Uri.encodeComponent(label)}',
+                        );
+                      },
+                      child: const Text('Show all'),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(
+                height: _shelfHeight,
+                child: loading
+                    ? _shelfSkeleton()
+                    : shelfError != null
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  shelfError,
+                                  style: TextStyle(
+                                    color: Theme.of(context).colorScheme.error,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                TextButton(
+                                  onPressed: () => _loadShelf(topic),
+                                  child: const Text('Retry shelf'),
+                                ),
+                              ],
+                            ),
+                          )
+                        : books.isEmpty
+                            ? const Center(
+                                child: Text('No books for this shelf yet'),
+                              )
+                            : ListView.builder(
+                                scrollDirection: Axis.horizontal,
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 16),
+                                itemCount: books.length + 1,
+                                itemBuilder: (ctx, j) {
+                                  if (j == books.length) {
+                                    return Padding(
+                                      padding: const EdgeInsets.only(right: 12),
+                                      child: _ShowAllCard(
+                                        onTap: () => context.push(
+                                          '/discover/topic/$topic?label=${Uri.encodeComponent(label)}',
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  return Padding(
+                                    padding: const EdgeInsets.only(right: 12),
+                                    child: BookCard(
+                                      book: books[j],
+                                      animationIndex: j,
+                                    ),
+                                  );
+                                },
+                              ),
+              ),
+            ],
+          );
+        }
+
         // ── Free to Read shelf ─────────────────────────────────────────────
-        if (i == forYouCount) {
+        final readableIndex = forYouCount + _topics.length;
+        if (i == readableIndex) {
           return _buildReadableShelf();
         }
 
-        // ── Genre shelves ──────────────────────────────────────────────────
-        // Offset = forYouCount + 1 (for the readable shelf).
-        final topicIndex = i - forYouCount - 1;
-        final t = _topics[topicIndex];
-        final topic = t['topic']!;
-        final label = t['label']!;
-        if (!_requestedTopics.contains(topic)) {
-          _requestedTopics.add(topic);
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _loadShelf(topic);
-          });
+        // ── Genres shelf (always last) ──────────────────────────────────────
+        if (i == readableIndex + 1) {
+          return _buildGenresShelf(genres);
         }
-        final books = _shelves[topic] ?? [];
-        final loading = _loading[topic] ?? false;
-        final shelfError = _shelfErrors[topic];
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      label,
-                      style: GoogleFonts.lora(
-                          fontSize: 18, fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () {
-                      _storage.incrementDiscoverMetric(
-                          'discover_show_all_topic_tap');
-                      context.push(
-                        '/discover/topic/$topic?label=${Uri.encodeComponent(label)}',
-                      );
-                    },
-                    child: const Text('Show all'),
-                  ),
-                ],
-              ),
-            ),
-            SizedBox(
-              height: _shelfHeight,
-              child: loading
-                  ? _shelfSkeleton()
-                  : shelfError != null
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text(
-                                shelfError,
-                                style: TextStyle(
-                                  color: Theme.of(context).colorScheme.error,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              TextButton(
-                                onPressed: () => _loadShelf(topic),
-                                child: const Text('Retry shelf'),
-                              ),
-                            ],
-                          ),
-                        )
-                      : books.isEmpty
-                          ? const Center(
-                              child: Text('No books for this shelf yet'),
-                            )
-                          : ListView.builder(
-                              scrollDirection: Axis.horizontal,
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 16),
-                              itemCount: books.length + 1,
-                              itemBuilder: (ctx, j) {
-                                if (j == books.length) {
-                                  return Padding(
-                                    padding: const EdgeInsets.only(right: 12),
-                                    child: _ShowAllCard(
-                                      onTap: () => context.push(
-                                        '/discover/topic/$topic?label=${Uri.encodeComponent(label)}',
-                                      ),
-                                    ),
-                                  );
-                                }
-                                return Padding(
-                                  padding: const EdgeInsets.only(right: 12),
-                                  child: BookCard(
-                                    book: books[j],
-                                    animationIndex: j,
-                                  ),
-                                );
-                              },
-                            ),
-            ),
-          ],
-        );
+
+        return const SizedBox.shrink();
       },
     );
   }
@@ -737,8 +756,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                           child: Text('No readable books available yet'))
                       : ListView.builder(
                           scrollDirection: Axis.horizontal,
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 16),
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
                           itemCount: _readableBooks.length + 1,
                           itemBuilder: (ctx, j) {
                             if (j == _readableBooks.length) {
@@ -765,6 +783,210 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         ),
       ],
     );
+  }
+
+  Widget _buildGenresShelf(GenresProvider genresProvider) {
+    final cs = Theme.of(context).colorScheme;
+    const label = 'Explore Genres';
+    final genres = genresProvider.genres;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 16, 8),
+          child: Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: cs.primary.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: PhosphorIcon(
+                    PhosphorIconsRegular.tag,
+                    size: 16,
+                    color: cs.primary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: GoogleFonts.lora(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      'Pick a mood and dive into your next read',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: cs.onSurface.withValues(alpha: 0.62),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: 156,
+          child: genres.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Text(
+                      'No genres available',
+                      style:
+                          TextStyle(color: cs.onSurface.withValues(alpha: 0.6)),
+                    ),
+                  ),
+                )
+              : ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: genres.length,
+                  itemBuilder: (ctx, j) => _buildGenreCard(genres[j], j, cs),
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGenreCard(Genre genre, int index, ColorScheme cs) {
+    final icon = _genreIconForGenre(genre, index);
+    return Padding(
+      padding: const EdgeInsets.only(right: 12),
+      child: SizedBox(
+        width: 220,
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(18),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: () {
+              _storage.incrementDiscoverMetric('discover_genre_tap');
+              context.push(
+                '/discover/genre/${Uri.encodeComponent(genre.key)}?name=${Uri.encodeComponent(genre.name)}',
+              );
+            },
+            child: Ink(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                gradient: LinearGradient(
+                  colors: [
+                    cs.primary.withValues(alpha: 0.16),
+                    cs.secondary.withValues(alpha: 0.10),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                border: Border.all(color: cs.outline.withValues(alpha: 0.40)),
+                boxShadow: [
+                  BoxShadow(
+                    color: cs.shadow.withValues(alpha: 0.08),
+                    blurRadius: 14,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 34,
+                          height: 34,
+                          decoration: BoxDecoration(
+                            color: cs.primary.withValues(alpha: 0.16),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child:
+                                PhosphorIcon(icon, size: 18, color: cs.primary),
+                          ),
+                        ),
+                        const Spacer(),
+                        PhosphorIcon(
+                          PhosphorIconsRegular.arrowUpRight,
+                          size: 16,
+                          color: cs.primary.withValues(alpha: 0.90),
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    Text(
+                      genre.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.lora(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: cs.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Browse collection',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: cs.onSurface.withValues(alpha: 0.66),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  PhosphorIconData _genreIconForGenre(Genre genre, int index) {
+    switch (genre.key) {
+      case 'history':
+      case 'historical_fiction':
+        return PhosphorIconsRegular.clockCounterClockwise;
+      case 'biography':
+        return PhosphorIconsRegular.user;
+      case 'mystery':
+        return PhosphorIconsRegular.magnifyingGlass;
+      case 'science_fiction':
+        return PhosphorIconsRegular.books;
+      case 'adventure':
+      case 'thriller':
+        return PhosphorIconsRegular.arrowRight;
+      case 'horror':
+        return PhosphorIconsRegular.lock;
+      case 'fantasy':
+      case 'philosophy':
+        return PhosphorIconsRegular.sparkle;
+      case 'children':
+      case 'young_adult':
+        return PhosphorIconsRegular.book;
+      case 'poetry':
+      case 'romance':
+      default:
+        const fallback = [
+          PhosphorIconsRegular.bookOpen,
+          PhosphorIconsRegular.book,
+          PhosphorIconsRegular.tag,
+        ];
+        return fallback[index % fallback.length];
+    }
   }
 
   Widget _shelfSkeleton() {
