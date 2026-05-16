@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
 import '../models/book.dart';
+import '../providers/user_profile_provider.dart';
 import '../services/openlibrary_service.dart';
 import '../widgets/book_list_row.dart';
 
@@ -66,9 +68,20 @@ class _GenreBooksScreenState extends State<GenreBooksScreen> {
     }
 
     try {
+      final profile = context.read<UserProfileProvider>();
+      if (!profile.isGenreAllowed(widget.genreKey)) {
+        if (!mounted) return;
+        setState(() {
+          _error = 'This genre is unavailable for your current age profile.';
+          _loading = false;
+          _loadingMore = false;
+        });
+        return;
+      }
       final resp = await _service.fetchBooks(
         topic: widget.genreKey,
         page: _page,
+        userAge: profile.userAge,
       );
 
       if (!mounted) return;
@@ -149,8 +162,7 @@ class _GenreBooksScreenState extends State<GenreBooksScreen> {
                         children: const [
                           SizedBox(height: 120),
                           Center(
-                              child:
-                                  Text('No books found in this genre yet.')),
+                              child: Text('No books found in this genre yet.')),
                         ],
                       )
                     : ListView.builder(
@@ -172,4 +184,3 @@ class _GenreBooksScreenState extends State<GenreBooksScreen> {
     );
   }
 }
-

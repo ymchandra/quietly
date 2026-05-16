@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/book.dart';
 import '../providers/library_provider.dart';
+import '../providers/user_profile_provider.dart';
 import '../services/openlibrary_service.dart';
 import '../services/storage_service.dart';
 import '../widgets/book_card.dart';
@@ -120,15 +121,21 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     setState(() => _relatedLoading = true);
 
     final groups = <_RelatedGroup>[];
+    final userAge = context.read<UserProfileProvider>().userAge;
 
     // --- Author group ---
     if (book.authors.isNotEmpty) {
       final rawName = book.authors.first.name;
       final displayName = _formatAuthorName(rawName);
       try {
-        final resp = await _service.fetchBooks(search: displayName, page: 1);
+        final resp = await _service.fetchBooks(
+          search: displayName,
+          page: 1,
+          userAge: userAge,
+        );
         final books = resp.results
-            .where((b) => b.id != book.id && _bookMatchesAuthor(b, rawName, displayName))
+            .where((b) =>
+                b.id != book.id && _bookMatchesAuthor(b, rawName, displayName))
             .take(10)
             .toList();
         if (books.isNotEmpty) {
@@ -145,11 +152,13 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     final subject = _pickSubject(book);
     if (subject != null) {
       try {
-        final resp = await _service.fetchBooks(topic: subject, page: 1);
-        final books = resp.results
-            .where((b) => b.id != book.id)
-            .take(10)
-            .toList();
+        final resp = await _service.fetchBooks(
+          topic: subject,
+          page: 1,
+          userAge: userAge,
+        );
+        final books =
+            resp.results.where((b) => b.id != book.id).take(10).toList();
         if (books.isNotEmpty) {
           groups.add(_RelatedGroup(
             label: 'More ${_capitalize(subject)}',
@@ -175,7 +184,8 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     return parts.reversed.map((p) => p.trim()).join(' ').trim();
   }
 
-  static bool _bookMatchesAuthor(Book book, String rawName, String displayName) {
+  static bool _bookMatchesAuthor(
+      Book book, String rawName, String displayName) {
     final lastName = rawName.split(',').first.toLowerCase();
     final displayLower = displayName.toLowerCase();
     return book.authors.any((a) {
@@ -242,7 +252,8 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     if (_book == null || !_readEnabled) return;
     setState(() => _downloading = true);
     try {
-      final content = await _service.fetchBookContent(_book!);
+      final userAge = context.read<UserProfileProvider>().userAge;
+      final content = await _service.fetchBookContent(_book!, userAge: userAge);
       if (content.isEpubBased) {
         await _storage.saveOfflineEpub(_book!.id, content.epubBytes!);
       } else if (content.text != null) {
@@ -253,8 +264,8 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
       await lib.addDownloaded(_book!);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Download failed: $e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Download failed: $e')));
       }
     } finally {
       if (mounted) setState(() => _downloading = false);
@@ -336,7 +347,8 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   Future<void> _checkReadability(Book book) async {
     if (!mounted) return;
     setState(() => _checkingReadability = true);
-    final canRead = await _service.hasReadableText(book);
+    final userAge = context.read<UserProfileProvider>().userAge;
+    final canRead = await _service.hasReadableText(book, userAge: userAge);
     if (!mounted) return;
     setState(() {
       _canRead = canRead;
@@ -360,7 +372,8 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     final inReadLater = lib.isInReadLater(book.id);
     final downloaded = lib.isDownloaded(book.id);
     final borrowable = _ebookAccess == EbookAccess.borrowable;
-    final primaryActionDisabled = _accessPending || (!_readEnabled && !borrowable);
+    final primaryActionDisabled =
+        _accessPending || (!_readEnabled && !borrowable);
     final offlineDisabled = !_readEnabled;
 
     return Scaffold(
@@ -369,9 +382,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         actions: [
           IconButton(
             icon: PhosphorIcon(
-              inWishlist
-                  ? PhosphorIconsFill.heart
-                  : PhosphorIconsRegular.heart,
+              inWishlist ? PhosphorIconsFill.heart : PhosphorIconsRegular.heart,
               color: inWishlist ? cs.error : null,
             ),
             onPressed: () => lib.toggleWishlist(book),
@@ -405,8 +416,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                     children: [
                       Text(book.title,
                           style: GoogleFonts.lora(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold)),
+                              fontSize: 18, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 6),
                       Text(book.authorName,
                           style: TextStyle(
@@ -422,8 +432,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                         Text('${book.downloadCount} downloads',
                             style: TextStyle(
                                 fontSize: 12,
-                                color:
-                                    cs.onSurface.withValues(alpha: 0.5))),
+                                color: cs.onSurface.withValues(alpha: 0.5))),
                       ]),
                       const SizedBox(height: 10),
                       _AvailabilityBadge(
@@ -455,7 +464,10 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                   style: const TextStyle(fontSize: 16),
                 ),
               ),
-            ).animate(delay: 100.ms).fadeIn(duration: 280.ms).slideY(begin: 0.06, end: 0),
+            )
+                .animate(delay: 100.ms)
+                .fadeIn(duration: 280.ms)
+                .slideY(begin: 0.06, end: 0),
             const SizedBox(height: 10),
             SizedBox(
               width: double.infinity,
@@ -476,7 +488,10 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                                 : 'Unavailable Offline',
                       ),
               ),
-            ).animate(delay: 160.ms).fadeIn(duration: 280.ms).slideY(begin: 0.06, end: 0),
+            )
+                .animate(delay: 160.ms)
+                .fadeIn(duration: 280.ms)
+                .slideY(begin: 0.06, end: 0),
             if (!_accessPending && !_readEnabled) ...[
               const SizedBox(height: 8),
               _AccessInfoBanner(ebookAccess: _ebookAccess),
@@ -584,8 +599,8 @@ class _AvailabilityBadge extends StatelessWidget {
           SizedBox(
             width: 12,
             height: 12,
-            child: CircularProgressIndicator(
-                strokeWidth: 1.5, color: cs.outline),
+            child:
+                CircularProgressIndicator(strokeWidth: 1.5, color: cs.outline),
           ),
           const SizedBox(width: 6),
           Text(
@@ -672,9 +687,7 @@ class _AvailabilityBadge extends StatelessWidget {
           Text(
             label,
             style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: fgColor),
+                fontSize: 12, fontWeight: FontWeight.w600, color: fgColor),
           ),
         ],
       ),
@@ -743,8 +756,7 @@ class _BorrowLinksBanner extends StatelessWidget {
   final Book book;
   const _BorrowLinksBanner({required this.book});
 
-  String get _openLibraryUrl =>
-      'https://openlibrary.org/works/OL${book.id}W';
+  String get _openLibraryUrl => 'https://openlibrary.org/works/OL${book.id}W';
 
   String get _worldcatUrl {
     final q = Uri.encodeComponent('${book.title} ${book.authorName}');
@@ -893,8 +905,7 @@ class _Cover extends StatelessWidget {
             borderRadius: BorderRadius.circular(8),
           ),
           alignment: Alignment.center,
-          child: Text(
-              book.title.substring(0, book.title.length > 2 ? 2 : 1),
+          child: Text(book.title.substring(0, book.title.length > 2 ? 2 : 1),
               style: const TextStyle(fontSize: 24)),
         ),
       );
@@ -1035,10 +1046,8 @@ class _RelatedBooksSection extends StatelessWidget {
               ),
             ],
           ),
-        )
-            .animate()
-            .fadeIn(duration: 350.ms)
-            .slideY(begin: -0.06, end: 0, duration: 350.ms, curve: Curves.easeOut),
+        ).animate().fadeIn(duration: 350.ms).slideY(
+            begin: -0.06, end: 0, duration: 350.ms, curve: Curves.easeOut),
 
         // ── Skeleton shown while loading ─────────────────────────────────
         if (loading) ...[
@@ -1054,7 +1063,8 @@ class _RelatedBooksSection extends StatelessWidget {
     );
   }
 
-  Widget _buildGroup(BuildContext context, _RelatedGroup group, ColorScheme cs) {
+  Widget _buildGroup(
+      BuildContext context, _RelatedGroup group, ColorScheme cs) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

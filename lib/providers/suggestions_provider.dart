@@ -30,6 +30,7 @@ class SuggestionsProvider extends ChangeNotifier {
   List<SuggestionGroup> _groups = [];
   bool _loading = false;
   bool _initialized = false;
+  int? _userAge;
   int? _cacheTimestampMs;
   int _lastRefreshMs = 0;
 
@@ -42,6 +43,7 @@ class SuggestionsProvider extends ChangeNotifier {
     _history = await _storage.getReadingHistory();
     _groups = await _storage.getCachedSuggestions();
     _cacheTimestampMs = await _storage.getSuggestionsCacheTimestamp();
+    _userAge = await _storage.getUserAge();
     _initialized = true;
     notifyListeners();
 
@@ -257,7 +259,11 @@ class SuggestionsProvider extends ChangeNotifier {
   ) async {
     for (final starter in _starterTopics) {
       try {
-        final resp = await _service.fetchBooks(topic: starter.$2, page: 1);
+        final resp = await _service.fetchBooks(
+          topic: starter.$2,
+          page: 1,
+          userAge: _userAge,
+        );
         final unique = _takeUnique(resp.results, seenBookIds, _booksPerGroup);
         if (unique.isEmpty) continue;
         groups.add(SuggestionGroup(
@@ -273,8 +279,10 @@ class SuggestionsProvider extends ChangeNotifier {
   }
 
   Future<List<Book>> _fetchMixedTopicBooks(String topic) async {
-    final primary = await _service.fetchBooks(topic: topic, page: 1);
-    final explore = await _service.fetchBooks(topic: topic, page: 2);
+    final primary =
+        await _service.fetchBooks(topic: topic, page: 1, userAge: _userAge);
+    final explore =
+        await _service.fetchBooks(topic: topic, page: 2, userAge: _userAge);
     return _mixAffinityAndNovelty(primary.results, explore.results);
   }
 
@@ -282,8 +290,10 @@ class SuggestionsProvider extends ChangeNotifier {
     String rawAuthor,
     String displayName,
   ) async {
-    final primaryResp = await _service.fetchBooks(search: displayName, page: 1);
-    final exploreResp = await _service.fetchBooks(search: displayName, page: 2);
+    final primaryResp = await _service.fetchBooks(
+        search: displayName, page: 1, userAge: _userAge);
+    final exploreResp = await _service.fetchBooks(
+        search: displayName, page: 2, userAge: _userAge);
     final primary = primaryResp.results
         .where((b) => _bookMatchesAuthor(b, rawAuthor, displayName))
         .toList();

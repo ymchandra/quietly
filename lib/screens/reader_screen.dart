@@ -18,6 +18,7 @@ import '../models/reader_settings.dart';
 import '../providers/library_provider.dart';
 import '../providers/reader_settings_provider.dart';
 import '../providers/suggestions_provider.dart';
+import '../providers/user_profile_provider.dart';
 import '../services/openlibrary_service.dart';
 import '../services/storage_service.dart';
 import '../widgets/reader_controls.dart';
@@ -50,7 +51,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   String? _error;
   final List<OpenLibraryDebugSnapshot> _debugSnapshots = [];
   bool _showDebugPanel = false;
-
 
   bool get _isEpubBased => _content?.isEpubBased ?? false;
   bool get _isHtmlBased => _content?.isHtmlBased ?? false;
@@ -171,9 +171,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
       if (_loadingCancelled) return;
       book ??= await _openLibrary.fetchBook(widget.bookId);
       if (_loadingCancelled) return;
+      final userAge = context.read<UserProfileProvider>().userAge;
       final content = await _openLibrary.fetchBookContent(
         book,
         onDebug: _recordDebug,
+        userAge: userAge,
       );
       if (_loadingCancelled) return;
       if (mounted) {
@@ -189,7 +191,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final spine = _content?.htmlSpine;
     if (spine == null || spine.isEmpty) return;
     final savedPercent =
-        context.read<LibraryProvider>().getProgress(widget.bookId)?.percent ?? 0;
+        context.read<LibraryProvider>().getProgress(widget.bookId)?.percent ??
+            0;
     final startPage = savedPercent == 0
         ? 0
         : (savedPercent * spine.length)
@@ -355,8 +358,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         } on TimeoutException {
           _recordDebug(
             OpenLibraryDebugSnapshot(
-              requestUrl:
-                  'reader://book/${widget.bookId}/pdf-fallback-timeout',
+              requestUrl: 'reader://book/${widget.bookId}/pdf-fallback-timeout',
               statusCode: null,
               success: false,
               bodyLength: 0,
@@ -379,10 +381,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
               statusCode: null,
               success: true,
               bodyLength: resolvedPdfText.length,
-              bodyPreview:
-                  resolvedPdfText.length > 240
-                      ? resolvedPdfText.substring(0, 240)
-                      : resolvedPdfText,
+              bodyPreview: resolvedPdfText.length > 240
+                  ? resolvedPdfText.substring(0, 240)
+                  : resolvedPdfText,
               resultCount: null,
               error: null,
               timestamp: DateTime.now(),
@@ -403,7 +404,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
         _clearEpubController();
         _recordDebug(
           OpenLibraryDebugSnapshot(
-            requestUrl: 'reader://book/${widget.bookId}/epub-text-extract-fallback',
+            requestUrl:
+                'reader://book/${widget.bookId}/epub-text-extract-fallback',
             statusCode: null,
             success: true,
             bodyLength: extracted.length,
@@ -423,11 +425,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
         return;
       }
 
-      final book = _book ?? widget.initialBook ?? await _openLibrary.fetchBook(widget.bookId);
+      final book = _book ??
+          widget.initialBook ??
+          await _openLibrary.fetchBook(widget.bookId);
+      final userAge = context.read<UserProfileProvider>().userAge;
       final fallback = await _openLibrary.fetchBookContent(
         book,
         onDebug: _recordDebug,
         preferEpub: false,
+        userAge: userAge,
       );
       if (!mounted) return;
 
@@ -529,7 +535,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final content = _content;
     if (content == null) return;
 
-
     final size = MediaQuery.of(context).size;
     if (content.text == null || size.isEmpty) return;
     final settings =
@@ -563,9 +568,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
           statusCode: null,
           success: false,
           bodyLength: content.text?.length ?? 0,
-          bodyPreview: content.text == null ? '' : content.text!.substring(0, content.text!.length > 200 ? 200 : content.text!.length),
+          bodyPreview: content.text == null
+              ? ''
+              : content.text!.substring(
+                  0, content.text!.length > 200 ? 200 : content.text!.length),
           resultCount: 0,
-          error: 'Text content was loaded, but no readable pages were generated.',
+          error:
+              'Text content was loaded, but no readable pages were generated.',
           timestamp: DateTime.now(),
         ),
       );
@@ -601,9 +610,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   void _loadMorePages() {
     if (_pages.length >= _allPages.length) return;
-    final nextEnd = (_pages.length + _pageChunkSize)
-        .clamp(0, _allPages.length)
-        .toInt();
+    final nextEnd =
+        (_pages.length + _pageChunkSize).clamp(0, _allPages.length).toInt();
     setState(() {
       _pages = _allPages.sublist(0, nextEnd);
     });
@@ -617,7 +625,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     required double lineHeightFactor,
     required String? fontFamily,
   }) {
-    final normalized = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n').trim();
+    final normalized =
+        text.replaceAll('\r\n', '\n').replaceAll('\r', '\n').trim();
     if (normalized.isEmpty) return [''];
 
     final paragraphs = normalized.split(RegExp(r'\n{2,}'));
@@ -864,9 +873,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
 
     // Page mode (also handles HTML spine navigation): left = prev, right = next.
-    final pageCount = _isHtmlBased
-        ? (_content?.htmlSpine?.length ?? 0)
-        : _pages.length;
+    final pageCount =
+        _isHtmlBased ? (_content?.htmlSpine?.length ?? 0) : _pages.length;
     if (dx < screenWidth * _leftZoneThreshold) {
       if (_currentPage > 0) {
         _pageController.previousPage(
@@ -900,9 +908,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (!_isHtmlBased && _pages.length > 3 && index >= _pages.length - 3) {
       _loadMorePages();
     }
-    final total = _isHtmlBased
-        ? (_content?.htmlSpine?.length ?? 0)
-        : _allPages.length;
+    final total =
+        _isHtmlBased ? (_content?.htmlSpine?.length ?? 0) : _allPages.length;
     if (total > 0) {
       final percent = (index + 1) / total;
       context.read<LibraryProvider>().updateProgress(widget.bookId, percent);
@@ -1199,7 +1206,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-
   Widget _buildHtmlReader(
     BuildContext context,
     Color bgColor,
@@ -1230,7 +1236,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   ),
                   child: ConstrainedBox(
                     constraints: BoxConstraints(
-                      minHeight: screenHeight - _pageTopPadding - _pageBottomPadding,
+                      minHeight:
+                          screenHeight - _pageTopPadding - _pageBottomPadding,
                     ),
                     child: Html(
                       data: spine[i],
@@ -1239,10 +1246,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
                         'p': Style(color: textColor),
                         'span': Style(color: textColor),
                         'div': Style(color: textColor),
-                        'h1': Style(color: textColor, fontWeight: FontWeight.bold),
-                        'h2': Style(color: textColor, fontWeight: FontWeight.bold),
-                        'h3': Style(color: textColor, fontWeight: FontWeight.bold),
-                        'h4': Style(color: textColor, fontWeight: FontWeight.bold),
+                        'h1': Style(
+                            color: textColor, fontWeight: FontWeight.bold),
+                        'h2': Style(
+                            color: textColor, fontWeight: FontWeight.bold),
+                        'h3': Style(
+                            color: textColor, fontWeight: FontWeight.bold),
+                        'h4': Style(
+                            color: textColor, fontWeight: FontWeight.bold),
                         'a': Style(color: accentColor),
                       },
                     ),
@@ -1469,8 +1480,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
                             width: 60,
                             child: LinearProgressIndicator(
                               minHeight: 4,
-                              backgroundColor: cs.primary.withValues(alpha: 0.15),
-                              valueColor: AlwaysStoppedAnimation<Color>(cs.primary),
+                              backgroundColor:
+                                  cs.primary.withValues(alpha: 0.15),
+                              valueColor:
+                                  AlwaysStoppedAnimation<Color>(cs.primary),
                             ),
                           ),
                         ),
@@ -1609,7 +1622,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
       );
     }
 
-
     if (_isEpubBased) {
       final controller = _epubController;
       final source = _epubSource;
@@ -1720,21 +1732,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 onPageChanged: _onPageChanged,
                 itemCount: _pages.length,
                 itemBuilder: (ctx, i) => Container(
-                        color: bgColor,
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(
-                            _pageHorizontalPadding,
-                            _pageTopPadding,
-                            _pageHorizontalPadding,
-                            _pageBottomPadding,
-                          ),
-                          child: Text(
-                            _pages[i],
-                            style: textStyle,
-                            textAlign: TextAlign.justify,
-                          ),
-                        ),
-                      ),
+                  color: bgColor,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      _pageHorizontalPadding,
+                      _pageTopPadding,
+                      _pageHorizontalPadding,
+                      _pageBottomPadding,
+                    ),
+                    child: Text(
+                      _pages[i],
+                      style: textStyle,
+                      textAlign: TextAlign.justify,
+                    ),
+                  ),
+                ),
               ),
             ReaderControls(
               visible: _showControls,
@@ -1754,11 +1766,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   context: context,
                   backgroundColor: bgColor,
                   shape: const RoundedRectangleBorder(
-                    borderRadius: BorderRadius.vertical(
-                        top: Radius.circular(20)),
+                    borderRadius:
+                        BorderRadius.vertical(top: Radius.circular(20)),
                   ),
-                  builder: (_) =>
-                      ReaderSettingsSheet(bookId: widget.bookId),
+                  builder: (_) => ReaderSettingsSheet(bookId: widget.bookId),
                 ).then((_) => _buildPages());
               },
             ),
@@ -1856,7 +1867,9 @@ class _ReaderDebugSnapshotTile extends StatelessWidget {
             borderRadius: BorderRadius.circular(8),
           ),
           child: SelectableText(
-            snapshot.bodyPreview.isEmpty ? '(empty body)' : snapshot.bodyPreview,
+            snapshot.bodyPreview.isEmpty
+                ? '(empty body)'
+                : snapshot.bodyPreview,
             style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
           ),
         ),

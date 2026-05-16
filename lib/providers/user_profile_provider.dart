@@ -12,7 +12,13 @@ class UserProfileProvider extends ChangeNotifier {
 
   // Age-gated topic keys. Must match the 'topic' values used in DiscoverScreen.
   static const _childTopics = ['fiction', 'adventure'];
-  static const _teenTopics = ['fiction', 'love', 'mystery', 'adventure', 'poetry'];
+  static const _teenTopics = [
+    'fiction',
+    'love',
+    'mystery',
+    'adventure',
+    'poetry'
+  ];
   static const _adultTopics = [
     'fiction',
     'love',
@@ -22,6 +28,30 @@ class UserProfileProvider extends ChangeNotifier {
     'adventure',
   ];
 
+  // Age-gated curated genres. Must match GenresProvider keys.
+  static const _childGenres = [
+    'children',
+    'young_adult',
+    'adventure',
+    'fantasy',
+    'science_fiction',
+    'mystery',
+    'history',
+    'biography',
+    'poetry',
+    'historical_fiction',
+  ];
+  static const _teenGenres = [
+    ..._childGenres,
+    'romance',
+    'thriller',
+    'philosophy',
+  ];
+  static const _adultGenres = [
+    ..._teenGenres,
+    'horror',
+  ];
+
   List<String> get allowedTopics {
     final age = _userAge;
     if (age == null) return _childTopics;
@@ -29,6 +59,18 @@ class UserProfileProvider extends ChangeNotifier {
     if (age < 18) return _teenTopics;
     return _adultTopics;
   }
+
+  List<String> get allowedGenres {
+    final age = _userAge;
+    if (age == null) return _childGenres;
+    if (age < 13) return _childGenres;
+    if (age < 18) return _teenGenres;
+    return _adultGenres;
+  }
+
+  bool isTopicAllowed(String topic) => allowedTopics.contains(topic);
+
+  bool isGenreAllowed(String genreKey) => allowedGenres.contains(genreKey);
 
   Future<void> init() async {
     _hasCompletedOnboarding = await _storage.getOnboardingDone();

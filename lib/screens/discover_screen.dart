@@ -121,6 +121,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   }
 
   Future<bool> _loadShelf(String topic) async {
+    final userAge = context.read<UserProfileProvider>().userAge;
     // Serve from cache immediately if available, then refresh in background.
     final cached = await _storage.getShelfCache(topic);
     if (cached != null && cached.isNotEmpty && mounted) {
@@ -139,6 +140,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     try {
       final resp = await _service.fetchBooks(
         topic: topic,
+        userAge: userAge,
         onDebug: (snapshot) {
           if (!mounted) return;
           setState(() => _shelfDebug[topic] = snapshot);
@@ -169,6 +171,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   }
 
   Future<bool> _loadReadableShelf() async {
+    final userAge = context.read<UserProfileProvider>().userAge;
     final cached = await _storage.getShelfCache('readable');
     if (cached != null && cached.isNotEmpty && mounted) {
       setState(() {
@@ -188,6 +191,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       final resp = await _service.fetchBooks(
         topic: 'fiction',
         ebookAccess: 'public_domain',
+        userAge: userAge,
       );
       if (mounted) {
         final books =
@@ -230,6 +234,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   }
 
   Future<void> _executeSearch(String q) async {
+    final userAge = context.read<UserProfileProvider>().userAge;
     setState(() {
       _query = q;
       _searching = q.isNotEmpty;
@@ -245,6 +250,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     try {
       final resp = await _service.fetchBooks(
         search: q,
+        userAge: userAge,
         onDebug: (snapshot) {
           if (!mounted || _query != q) return;
           setState(() => _searchDebug = snapshot);
@@ -788,7 +794,10 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   Widget _buildGenresShelf(GenresProvider genresProvider) {
     final cs = Theme.of(context).colorScheme;
     const label = 'Explore Genres';
-    final genres = genresProvider.genres;
+    final profile = context.watch<UserProfileProvider>();
+    final genres = genresProvider.genres
+        .where((g) => profile.isGenreAllowed(g.key))
+        .toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

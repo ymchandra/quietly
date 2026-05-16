@@ -78,6 +78,44 @@ class OpenLibraryService {
   static const _retryBaseDelay = Duration(milliseconds: 700);
   static const _pageSize = 20;
   final Map<int, Book> _bookCache = {};
+  static const Set<String> _minorBlockedTopics = {
+    'erotica',
+    'adult',
+    'adult_fiction',
+    'sex',
+    'sexuality',
+    'pornography',
+  };
+  static const Set<String> _childBlockedTopics = {
+    ..._minorBlockedTopics,
+    'romance',
+    'horror',
+    'thriller',
+  };
+  static const List<String> _minorUnsafeKeywords = [
+    'erotic',
+    'erotica',
+    'sex',
+    'sexual',
+    'porn',
+    'pornography',
+    'adult only',
+    'adultery',
+    'nsfw',
+    'incest',
+    'bdsm',
+  ];
+  static const List<String> _childUnsafeKeywords = [
+    ..._minorUnsafeKeywords,
+    'violence',
+    'violent',
+    'murder',
+    'serial killer',
+    'gore',
+    'graphic',
+    'horror',
+    'thriller',
+  ];
 
   Future<OpenLibraryResponse> fetchBooks({
     String? topic,
@@ -85,6 +123,7 @@ class OpenLibraryService {
     String languages = 'en',
     int page = 1,
     String? ebookAccess,
+    int? userAge,
     void Function(OpenLibraryDebugSnapshot snapshot)? onDebug,
   }) async {
     final uri = _buildListUri(
@@ -94,6 +133,14 @@ class OpenLibraryService {
       page: page,
       ebookAccess: ebookAccess,
     );
+    if (!_isTopicAllowedForAge(topic, userAge)) {
+      return OpenLibraryResponse(
+        count: 0,
+        next: null,
+        previous: null,
+        results: const [],
+      );
+    }
     http.Response? resp;
     var emitted = false;
     try {
@@ -115,7 +162,7 @@ class OpenLibraryService {
         throw Exception('HTTP ${resp.statusCode}');
       }
       final data = json.decode(resp.body) as Map<String, dynamic>;
-      final parsed = _parseSearchResponse(data, uri, page);
+      final parsed = _parseSearchResponse(data, uri, page, userAge: userAge);
       for (final book in parsed.results) {
         _bookCache[book.id] = book;
       }
@@ -166,7 +213,8 @@ class OpenLibraryService {
     return book;
   }
 
-  Future<bool> hasReadableText(Book book) async {
+  Future<bool> hasReadableText(Book book, {int? userAge}) async {
+    if (!_isBookAllowedForAge(book, userAge)) return false;
     if (_buildEpubSources(book).isNotEmpty) return true;
     if (_buildSources(book).isNotEmpty) return true;
     final discovered = await _discoverTextSources(book);
@@ -296,8 +344,12 @@ class OpenLibraryService {
 
   Future<String> fetchBookText(
     Book book, {
+    int? userAge,
     void Function(OpenLibraryDebugSnapshot snapshot)? onDebug,
   }) async {
+    if (!_isBookAllowedForAge(book, userAge)) {
+      throw Exception('This title is restricted for the selected age profile.');
+    }
     final sources = _buildSources(book);
     onDebug?.call(
       OpenLibraryDebugSnapshot(
@@ -647,7 +699,11 @@ class OpenLibraryService {
     Book book, {
     void Function(OpenLibraryDebugSnapshot)? onDebug,
     bool preferEpub = true,
+    int? userAge,
   }) async {
+    if (!_isBookAllowedForAge(book, userAge)) {
+      throw Exception('This title is restricted for the selected age profile.');
+    }
     if (preferEpub) {
       // Prefer formatted EPUB bytes first so the viewer can preserve layout.
       final epubPayload = await _fetchBookEpubBytes(book, onDebug: onDebug);
@@ -661,7 +717,11 @@ class OpenLibraryService {
 
     // Fallback: legacy plain-text sources.
     try {
-      final text = await fetchBookText(book, onDebug: onDebug);
+      final text = await fetchBookText(
+        book,
+        onDebug: onDebug,
+        userAge: userAge,
+      );
       return BookContent.text(text);
     } catch (e) {
       onDebug?.call(OpenLibraryDebugSnapshot(
@@ -1130,14 +1190,13 @@ class OpenLibraryService {
   }
 
   OpenLibraryResponse _parseSearchResponse(
-    Map<String, dynamic> json,
-    Uri uri,
-    int page,
-  ) {
+      Map<String, dynamic> json, Uri uri, int page,
+      {int? userAge}) {
     final docs = (json['docs'] as List<dynamic>? ?? []);
     final results = docs
         .map((d) => _mapSearchDocToBook(d as Map<String, dynamic>))
         .whereType<Book>()
+        .where((b) => _isBookAllowedForAge(b, userAge))
         .toList();
     final total = json['numFound'] as int? ?? results.length;
     final hasNext = page * _pageSize < total;
@@ -1441,6 +1500,45 @@ class OpenLibraryService {
   String _openLibraryLang(String code) {
     if (code == 'en') return 'eng';
     return code;
+  }
+
+  bool _isTopicAllowedForAge(String? topic, int? userAge) {
+    if (topic == null || topic.trim().isEmpty) return true;
+    final normalized = topic.trim().toLowerCase();
+    if (userAge == null || userAge < 13) {
+      return !_childBlockedTopics.contains(normalized);
+    }
+    if (userAge < 18) {
+      return !_minorBlockedTopics.contains(normalized);
+    }
+    return true;
+  }
+
+  bool _isBookAllowedForAge(Book book, int? userAge) {
+    if (userAge == null || userAge < 13) {
+      return !_containsUnsafeKeywords(book, _childUnsafeKeywords);
+    }
+    if (userAge < 18) {
+      return !_containsUnsafeKeywords(book, _minorUnsafeKeywords);
+    }
+    return true;
+  }
+
+  bool _containsUnsafeKeywords(Book book, List<String> unsafeKeywords) {
+    final buffer = StringBuffer(book.title.toLowerCase());
+    for (final s in book.subjects) {
+      buffer.write(' ');
+      buffer.write(s.toLowerCase());
+    }
+    for (final s in book.bookshelves) {
+      buffer.write(' ');
+      buffer.write(s.toLowerCase());
+    }
+    final text = buffer.toString();
+    for (final keyword in unsafeKeywords) {
+      if (text.contains(keyword)) return true;
+    }
+    return false;
   }
 
   List<String> _buildSources(Book book) {

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
 import '../models/book.dart';
+import '../providers/user_profile_provider.dart';
 import '../services/openlibrary_service.dart';
 import '../widgets/book_list_row.dart';
 
@@ -107,24 +109,55 @@ class _TopicBooksScreenState extends State<TopicBooksScreen> {
   }
 
   Future<OpenLibraryResponse> _fetchPage(int page) {
+    final profile = context.read<UserProfileProvider>();
+    final userAge = profile.userAge;
     final type = widget.queryType;
     final value = widget.queryValue;
     final ebookAccess = widget.readableOnly ? 'public_domain' : null;
     if (type == 'author' && value != null && value.trim().isNotEmpty) {
       final displayName = _formatAuthorName(value);
       return _service.fetchBooks(
-          search: displayName, page: page, ebookAccess: ebookAccess);
+        search: displayName,
+        page: page,
+        ebookAccess: ebookAccess,
+        userAge: userAge,
+      );
     }
     if (type == 'subject' && value != null && value.trim().isNotEmpty) {
+      if (!profile.isTopicAllowed(value)) {
+        return Future.value(
+          const OpenLibraryResponse(
+              count: 0, next: null, previous: null, results: []),
+        );
+      }
       return _service.fetchBooks(
-          topic: value, page: page, ebookAccess: ebookAccess);
+        topic: value,
+        page: page,
+        ebookAccess: ebookAccess,
+        userAge: userAge,
+      );
     }
     final fallbackTopic = widget.topic;
     if (fallbackTopic != null && fallbackTopic.isNotEmpty) {
+      if (!profile.isTopicAllowed(fallbackTopic)) {
+        return Future.value(
+          const OpenLibraryResponse(
+              count: 0, next: null, previous: null, results: []),
+        );
+      }
       return _service.fetchBooks(
-          topic: fallbackTopic, page: page, ebookAccess: ebookAccess);
+        topic: fallbackTopic,
+        page: page,
+        ebookAccess: ebookAccess,
+        userAge: userAge,
+      );
     }
-    return _service.fetchBooks(topic: 'fiction', page: page, ebookAccess: ebookAccess);
+    return _service.fetchBooks(
+      topic: 'fiction',
+      page: page,
+      ebookAccess: ebookAccess,
+      userAge: userAge,
+    );
   }
 
   static String _formatAuthorName(String raw) {
