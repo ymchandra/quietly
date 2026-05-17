@@ -159,13 +159,37 @@ class _ReaderScreenState extends State<ReaderScreen> {
       final offlineEpub = await _storage.getOfflineEpubFile(widget.bookId);
       if (offlineEpub != null) {
         if (_loadingCancelled) return;
-        // ...existing code...
+        final bytes = await offlineEpub.readAsBytes();
+        if (bytes.isNotEmpty) {
+          await _setEpubController(bytes);
+          if (_loadingCancelled || !mounted) return;
+          setState(() {
+            _book = book;
+            _content = BookContent.epub(
+              bytes,
+              epubSourceUrl: offlineEpub.path,
+            );
+            _loading = false;
+            _error = null;
+          });
+          return;
+        }
       }
 
       if (_loadingCancelled) return;
       final offline = await _storage.getOfflineText(widget.bookId);
       if (offline != null) {
-        // ...existing code...
+        if (offline.trim().isNotEmpty) {
+          if (!mounted) return;
+          setState(() {
+            _book = book;
+            _content = BookContent.text(offline);
+            _loading = false;
+            _error = null;
+          });
+          _buildPages();
+          return;
+        }
       }
 
       if (_loadingCancelled) return;
@@ -178,11 +202,28 @@ class _ReaderScreenState extends State<ReaderScreen> {
         userAge: userAge,
       );
       if (_loadingCancelled) return;
+      if (content.isEpubBased && content.epubBytes != null) {
+        await _setEpubController(content.epubBytes!);
+      }
       if (mounted) {
-        // ...existing code...
+        setState(() {
+          _book = book;
+          _content = content;
+          _loading = false;
+          _error = null;
+        });
+        if (content.isHtmlBased) {
+          _restoreHtmlProgress();
+        } else if (!content.isEpubBased) {
+          _buildPages();
+        }
       }
     } catch (e) {
-      // ...existing code...
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
     }
   }
 
