@@ -77,7 +77,14 @@ class OpenLibraryService {
   static const _maxPdfBytes = 30 * 1024 * 1024;
   static const _retryBaseDelay = Duration(milliseconds: 700);
   static const _pageSize = 20;
+  static const _defaultUserAgent = 'Quietly/1.0 (+mailto:contact@example.org)';
   final Map<int, Book> _bookCache = {};
+  final String _userAgent;
+
+  OpenLibraryService({String? userAgent})
+      : _userAgent = (userAgent != null && userAgent.trim().isNotEmpty)
+            ? userAgent.trim()
+            : _defaultUserAgent;
   static const Set<String> _minorBlockedTopics = {
     'erotica',
     'adult',
@@ -1836,7 +1843,10 @@ class OpenLibraryService {
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         onAttemptStart?.call(attempt);
-        return await http.get(uri).timeout(timeout);
+        // Keep User-Agent stable and non-identifying (no username/device name).
+        return await http.get(uri, headers: {
+          'User-Agent': _userAgent,
+        }).timeout(timeout);
       } on TimeoutException catch (e) {
         lastError = e;
       } on SocketException catch (e) {
